@@ -31,6 +31,7 @@
  * Hookable methods 
  * ================
  * @method bool create()
+ * @method string noCacheURL($http = false)
  * 
  */
 
@@ -188,6 +189,34 @@ class PagefileExtra extends WireData {
 	}
 
 	/**
+	 * Get cache busted URL
+	 * 
+	 * @param bool $http
+	 * @return string
+	 * @since 3.0.194
+	 * 
+	 */
+	public function ___noCacheURL($http = false) {
+		
+		$fileUrl = $this->pagefile->url(); 
+		$thisUrl = $this->url();
+		$bustUrl = $this->pagefile->get($http ? 'HTTPURL' : 'URL');
+		
+		if(strpos($bustUrl, $fileUrl) !== false) {
+			// i.e. /site/assets/files/321/file.webp?nc=1234 or file.webp?1r17j
+			$value = str_replace($fileUrl, $thisUrl, $bustUrl);
+		} else {
+			// i.e. /site/assets/files/321/file.1r17j.webp
+			$fileExt = pathinfo($fileUrl, PATHINFO_EXTENSION);
+			$thisExt = pathinfo($thisUrl, PATHINFO_EXTENSION);
+			$basename = basename($bustUrl, ".$fileExt");
+			$value = dirname($bustUrl) . "/$basename.$thisExt";
+		}
+		
+		return $value;
+	}
+
+	/**
 	 * Unlink/delete the extra file
 	 * 
 	 * @return bool
@@ -205,8 +234,7 @@ class PagefileExtra extends WireData {
 	 * 
 	 */
 	public function rename() {
-		if(!$this->exists()) return false;
-		if(!$this->filenamePrevious) return false;
+		if(!$this->filenamePrevious || !is_readable($this->filenamePrevious)) return false;
 		return $this->wire('files')->rename($this->filenamePrevious, $this->filename());
 	}
 
@@ -249,7 +277,7 @@ class PagefileExtra extends WireData {
 			case 'savingsPct':
 				$imageSize = $this->pagefile->filesize();
 				$extraSize = $this->filesize();
-				$value = round((($imageSize - $extraSize) / $imageSize) * 100) . '%';
+				$value = $imageSize ? round((($imageSize - $extraSize) / $imageSize) * 100) . '%' : '0%';
 				break;
 			case 'url':
 				$value = $this->url();
@@ -274,7 +302,7 @@ class PagefileExtra extends WireData {
 				break;
 			case 'URL':
 			case 'HTTPURL':
-				$value = str_replace($this->pagefile->url(), $this->url(), $this->pagefile->$key);
+				$value = $this->noCacheURL($key === 'HTTPURL');
 				break;
 			case 'pagefile':	
 				$value = $this->pagefile;

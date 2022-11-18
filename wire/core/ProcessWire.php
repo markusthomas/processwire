@@ -17,10 +17,43 @@ require_once(__DIR__ . '/boot.php');
  * ~~~~~
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
- * 
+ *
+ * Default API vars (A-Z) 
+ * ======================
+ * @property AdminTheme|AdminThemeFramework|null $adminTheme
+ * @property WireCache $cache
+ * @property WireClassLoader $classLoader
+ * @property Config $config
+ * @property WireDatabasePDO $database
+ * @property WireDateTime $datetime
+ * @property Fieldgroups $fieldgroups
+ * @property Fields $fields
+ * @property Fieldtypes $fieldtypes
+ * @property WireFileTools $files
  * @property Fuel $fuel
+ * @property WireHooks $hooks
+ * @property WireInput $input
+ * @property Languages $languages (present only if LanguageSupport installed)
+ * @property WireLog $log
+ * @property WireMailTools $mail
+ * @property Modules $modules
+ * @property Notices $notices
+ * @property Page $page
+ * @property Pages $pages
+ * @property Permissions $permissions
+ * @property Process|ProcessPageView $process
+ * @property WireProfilerInterface $profiler
+ * @property Roles $roles
+ * @property Sanitizer $sanitizer
+ * @property Session $session
+ * @property Templates $templates
+ * @property Paths $urls
+ * @property User $user
+ * @property Users $users
+ * @property ProcessWire $wire
+ * @property WireShutdown $shutdown
  * 
  * @method init()
  * @method ready()
@@ -46,7 +79,7 @@ class ProcessWire extends Wire {
 	 * Reversion revision number
 	 * 
 	 */
-	const versionRevision = 148;
+	const versionRevision = 200;
 
 	/**
 	 * Version suffix string (when applicable)
@@ -121,6 +154,14 @@ class ProcessWire extends Wire {
 	const statusFinished = 128;
 
 	/**
+	 * Status when the request has finished abnormally (like a manual exit)
+	 * 
+	 * @since 3.0.180
+	 *
+	 */
+	const statusExited = 256;
+
+	/**
 	 * Status when the request failed due to an Exception or 404
 	 * 
 	 * API variables should be checked for availability before using. 
@@ -150,6 +191,7 @@ class ProcessWire extends Wire {
 		self::statusRender => 'render',
 		self::statusDownload => 'download',
 		self::statusFinished => 'finished',
+		self::statusExited => 'exited',
 		self::statusFailed => 'failed',
 	);
 
@@ -164,9 +206,6 @@ class ProcessWire extends Wire {
 	/**
 	 * Fuel manages ProcessWire API variables
 	 * 
-	 * This will replace the static $fuel from the Wire class in PW 3.0.
-	 * Currently it is just here as a placeholder.
-	 *
 	 * @var Fuel|null
 	 *
 	 */
@@ -252,14 +291,20 @@ class ProcessWire extends Wire {
 		$config->setWire($this);
 		
 		$this->debug = $config->debug; 
+		if($this->debug) Debug::timer('all');
 		$this->instanceID = self::addInstance($this);
 		$this->setWire($this);
 		
 		$this->fuel = new Fuel();
 		$this->fuel->set('wire', $this, true);
 
+		/** @var WireClassLoader $classLoader */
 		$classLoader = $this->wire('classLoader', new WireClassLoader($this), true);
 		$classLoader->addNamespace((strlen(__NAMESPACE__) ? __NAMESPACE__ : "\\"), PROCESSWIRE_CORE_PATH);
+
+		if($config->usePageClasses) {
+			$classLoader->addSuffix('Page', $config->paths->classes);
+		}
 
 		$this->wire('hooks', new WireHooks($this, $config), true);
 
@@ -271,8 +316,23 @@ class ProcessWire extends Wire {
 		if(self::getNumInstances() > 1) {
 			// this instance is not handling the request and needs a mock $page API var and pageview
 			/** @var ProcessPageView $view */
-			$view = $this->wire('modules')->get('ProcessPageView');
+			$view = $this->fuel->get('modules')->get('ProcessPageView');
 			$view->execute(false);
+		}
+	}
+
+	/**
+	 * Destruct
+	 * 
+	 */
+	public function __destruct() {
+		if($this->status < self::statusFinished) {
+			// call finished hook if it wasn’t already
+			$this->status = self::statusExited;
+			$this->finished(array(
+				'prevStatus' => $this->status,
+				'exited' => true, 
+			));
 		}
 	}
 
@@ -325,6 +385,7 @@ class ProcessWire extends Wire {
 		$version = self::versionMajor . "." . self::versionMinor . "." . self::versionRevision; 
 		$config->version = $version;
 		$config->versionName = trim($version . " " . self::versionSuffix);
+		$config->moduleServiceKey .= str_replace('.', '', $version);
 		
 		// $config->debugIf: optional setting to determine if debug mode should be on or off
 		if($config->debugIf && is_string($config->debugIf)) {
@@ -344,7 +405,7 @@ class ProcessWire extends Wire {
 			$config->debug = $debugIf;
 		}
 
-		if($config->useFunctionsAPI) {
+		if($config->useFunctionsAPI && !function_exists("\\ProcessWire\\pages")) {
 			$file = $config->paths->core . 'FunctionsAPI.php';
 			/** @noinspection PhpIncludeInspection */
 			include_once($file);
@@ -439,10 +500,11 @@ class ProcessWire extends Wire {
 			Debug::timer('boot'); 
 			Debug::timer('boot.load'); 
 		}
-
+		
+		$notices = new Notices();
+		$this->wire('notices', $notices, true); // first so any API var can send notices
 		$this->wire('urls', $config->urls); // shortcut API var
-		$this->wire('log', new WireLog(), true); 
-		$this->wire('notices', new Notices(), true); 
+		$this->wire('log', new WireLog(), true);
 		$this->wire('sanitizer', new Sanitizer()); 
 		$this->wire('datetime', new WireDateTime());
 		$this->wire('files', new WireFileTools());
@@ -461,7 +523,9 @@ class ProcessWire extends Wire {
 	
 		/** @var WireCache $cache */
 		$cache = $this->wire('cache', new WireCache(), true); 
-		$cache->preload($config->preloadCacheNames); 
+		$cacheNames = $config->preloadCacheNames;
+		if($database->getEngine() === 'innodb') $cacheNames[] = 'InnoDB.stopwords';
+		$cache->preload($cacheNames); 
 		
 		$modules = null;
 		try { 		
@@ -489,10 +553,12 @@ class ProcessWire extends Wire {
 		$pages = $this->wire('pages', new Pages($this), true);
 
 		$this->initVar('fieldtypes', $fieldtypes);
+		if($this->debug) Debug::timer('init.fields.templates.fieldgroups');
 		$this->initVar('fields', $fields);
 		$this->initVar('fieldgroups', $fieldgroups);
 		$this->initVar('templates', $templates);
-		$this->initVar('pages', $pages); 
+		if($this->debug) Debug::saveTimer('init.fields.templates.fieldgroups');
+		$this->initVar('pages', $pages);
 	
 		if($this->debug) Debug::timer('boot.load.permissions'); 
 		if(!$t = $templates->get('permission')) throw new WireException("Missing system template: 'permission'");
@@ -513,13 +579,15 @@ class ProcessWire extends Wire {
 		// the current user can only be determined after the session has been initiated
 		$session = $this->wire('session', new Session($this), true); 
 		$this->initVar('session', $session);
-		$this->wire('user', $users->getCurrentUser()); 
+		$this->wire('user', $users->getCurrentUser());
+		
 		$input = $this->wire('input', new WireInput(), true); 
 		if($config->wireInputLazy) $input->setLazy(true);
 
 		// populate admin URL before modules init()
 		$config->urls->admin = $config->urls->root . ltrim($pages->getPath($config->adminRootPageID), '/');
 
+		$notices->init();
 		if($this->debug) Debug::saveTimer('boot.load', 'includes all boot.load timers');
 		$this->setStatus(self::statusInit);
 	}
@@ -549,7 +617,7 @@ class ProcessWire extends Wire {
 	public function setStatus($status, array $data = array()) {
 		
 		/** @var Config $config */
-		$config = $this->wire('config');
+		$config = $this->fuel->get('config');
 		
 		// don’t re-trigger if this state has already been triggered
 		// except that a failed status can be backtracked
@@ -588,6 +656,7 @@ class ProcessWire extends Wire {
 			// internal finished always runs after any included finished file
 			$data['prevStatus'] = $prevStatus;
 			$data['maintenance'] = true;
+			$data['exited'] = false;
 			$this->finished($data);
 		} else if($status == self::statusReady) {
 			// additional 'admin' or 'site' options for ready status
@@ -604,24 +673,27 @@ class ProcessWire extends Wire {
 	 * 
 	 * #pw-internal
 	 *
-	 * @param \Exception $e
+	 * @param \Throwable $e Exception or Error
 	 * @param string $reason
 	 * @param null $page
 	 * @param string $url
 	 * @since 3.0.142
 	 *
 	 */
-	public function setStatusFailed(\Exception $e, $reason = '', $page = null, $url = '') {
-		static $lastException = null;
-		if($lastException === $e) return;
+	public function setStatusFailed($e, $reason = '', $page = null, $url = '') {
+		static $lastThrowable = null;
+		if($lastThrowable === $e) return;
+		$isException = $e instanceof \Exception;
 		if(!$page instanceof Page) $page = new NullPage();
 		$this->setStatus(ProcessWire::statusFailed, array(
-			'exception' => $e,
+			'throwable' => $e, 
+			'exception' => $isException ? $e : null,
+			'error' => $isException ? null : $e, 
 			'failPage' => $page,
 			'reason' => $reason,
 			'url' => $url,
 		));
-		$lastException = $e;
+		$lastThrowable = $e;
 	}
 
 	/**
@@ -634,17 +706,20 @@ class ProcessWire extends Wire {
 	 * 
 	 */
 	protected function isAdmin() {
-		
-		$config = $this->wire('config');
+
+		/** @var Config $config */
+		$config = $this->fuel->get('config'); 
 		$admin = $config->admin;
 		if(is_bool($admin)) return $admin;
 		$admin = 0;
-		
-		$page = $this->wire('page');
+
+		/** @var Page $page */
+		$page = $this->fuel->get('page'); 
 		if(!$page || !$page->id) return 0;
 		
 		if(in_array($page->template->name, $config->adminTemplates)) {
-			$user = $this->wire('user');
+			/** @var User $user */
+			$user = $this->fuel->get('user'); 
 			if($user) $admin = $user->isLoggedin() ? true : false;
 		} else {
 			$admin = false;
@@ -676,7 +751,7 @@ class ProcessWire extends Wire {
 	 */
 	protected function ___init() {
 		if($this->debug) Debug::timer('boot.modules.autoload.init'); 
-		$this->wire('modules')->triggerInit();
+		$this->fuel->get('modules')->triggerInit();
 		if($this->debug) Debug::saveTimer('boot.modules.autoload.init');
 	}
 
@@ -688,7 +763,7 @@ class ProcessWire extends Wire {
 	 */
 	protected function ___ready() {
 		if($this->debug) Debug::timer('boot.modules.autoload.ready'); 
-		$this->wire('modules')->triggerReady();
+		$this->fuel->get('modules')->triggerReady();
 		$this->updater->ready();
 		unset($this->updater);
 		if($this->debug) Debug::saveTimer('boot.modules.autoload.ready'); 
@@ -700,6 +775,7 @@ class ProcessWire extends Wire {
 	 * @param array $data Additional data for hooks (3.0.147+ only):
 	 *  - `maintenance` (bool): Allow maintenance to run? (default=true)
 	 *  - `prevStatus` (int): Previous status before finished status (render, download or failed).
+	 *  - `exited` (bool): True if request was exited before finished (ProcessWire instance destructed before expected). 3.0.180+
 	 *  - `redirectUrl` (string): Contains redirect URL only if request ending with redirect (not present otherwise). 
 	 *  - `redirectType` (int): Contains redirect type 301 or 302, only if requestUrl property is also present.
 	 * 
@@ -708,28 +784,32 @@ class ProcessWire extends Wire {
 	 */
 	protected function ___finished(array $data = array()) {
 		
-		$config = $this->wire('config');
-		$session = $this->wire('session');
-		$cache = $this->wire('cache'); 
-		$profiler = $this->wire('profiler');
+		$config = $this->fuel->get('config'); /** @var Config $config */
+		$session = $this->fuel->get('session'); /** @var Session $session */
+		$cache = $this->fuel->get('cache'); /** @var WireCache $cache */
+		$profiler = $this->fuel->get('profiler'); /** @var WireProfilerInterface $profiler */
+		$exited = !empty($data['exited']);
 		
 		if($data) {} // data for hooks
 	
 		// if a hook cancelled maintenance then exit early 
 		if(isset($data['maintenance']) && $data['maintenance'] === false) return;
 		
-		if($session) $session->maintenance();
-		if($cache) $cache->maintenance();
+		if($session && !$exited) $session->maintenance();
+		if($cache && !$exited) $cache->maintenance();
 		if($profiler) $profiler->maintenance();
 
-		if($config->templateCompile) {
-			$compiler = new FileCompiler($this->wire('config')->paths->templates);
-			$compiler->maintenance();
-		}
-		
-		if($config->moduleCompile) {
-			$compiler = new FileCompiler($this->wire('config')->paths->siteModules);
-			$compiler->maintenance();
+		if($config && !$exited) {
+			if($config->templateCompile) {
+				$compiler = new FileCompiler($config->paths->templates);
+				$this->wire($compiler);
+				$compiler->maintenance();
+			}
+			if($config->moduleCompile) {
+				$compiler = new FileCompiler($config->paths->siteModules);
+				$this->wire($compiler);
+				$compiler->maintenance();
+			}
 		}
 	}
 
@@ -748,11 +828,20 @@ class ProcessWire extends Wire {
 		$this->wire($key, $value, $lock);
 		return $this;
 	}
-	
+
+	/**
+	 * Get API var directly
+	 * 
+	 * @param string $key
+	 * @return mixed
+	 * 
+	 */
 	public function __get($key) {
 		if($key === 'fuel') return $this->fuel;
 		if($key === 'shutdown') return $this->shutdown;
 		if($key === 'instanceID') return $this->instanceID;
+		$value = $this->fuel->get($key);
+		if($value !== null) return $value;
 		return parent::__get($key);
 	}
 
@@ -769,9 +858,9 @@ class ProcessWire extends Wire {
 	protected function includeFile($file, array $data = array()) {
 		if(!file_exists($file)) return false;
 		$this->fileSave = $file; // to prevent any possibility of extract() vars from overwriting
-		$config = $this->wire('config'); /** @var Config $config */
+		$config = $this->fuel->get('config'); /** @var Config $config */
 		if($this->status > self::statusBoot && $config->templateCompile) {
-			$files = $this->wire('files'); /** @var WireFileTools $files */
+			$files = $this->fuel->get('files'); /** @var WireFileTools $files */
 			if($files) $this->fileSave = $files->compile($file, array('skipIfNamespace' => true));
 		}
 		$this->pathSave = getcwd();
@@ -785,7 +874,16 @@ class ProcessWire extends Wire {
 		$this->fileSave = '';
 		return true; 
 	}
-	
+
+	/**
+	 * Call method
+	 * 
+	 * @param string $method
+	 * @param array $arguments
+	 * @return mixed
+	 * @throws WireException
+	 * 
+	 */
 	public function __call($method, $arguments) {
 		if(method_exists($this, "___$method")) return parent::__call($method, $arguments); 
 		$value = $this->__get($method);
@@ -805,6 +903,35 @@ class ProcessWire extends Wire {
 	public function fuel($name = '') {
 		if(empty($name)) return $this->fuel;
 		return $this->fuel->$name;
+	}
+
+	/**
+	 * Called if any Wire-derived object makes API calls before being wired
+	 * 
+	 * This is for debugging purposes only and is not called unless `ProcessWire::objectNotWired` is hooked. 
+	 * It is called only once per non-wired object. Uncomment code within to use. 
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param Wire $obj Object that accessed API var without being assigned ProcessWire instance
+	 * @param string|Wire The $name argument that was passed to $obj->wire($name, $value)
+	 * @param mixed $value The $value argument passed to $object->wire($name, $value)
+	 * @since 3.0.158
+	 * 
+	 */
+	public function _objectNotWired(Wire $obj, $name, $value) { 
+		// Uncomment code below to enable (use in admin)
+		/*
+		if(is_string($name) && $this->wire($name)) {
+			$msg = $obj->className() . " accessed API var \$$name before being wired";
+			$this->warning("$msg\n" . Debug::backtrace(array(
+				'limit' => 2, 
+				'getString' => true,
+				'getCnt' => false,
+				'getFile' => 'basename',
+			)));
+		}
+		*/
 	}
 	
 	/*** MULTI-INSTANCE *************************************************************************************/
@@ -1096,6 +1223,7 @@ class ProcessWire extends Wire {
 		$cfg['paths'] = clone $cfg['urls'];
 		$cfg['paths']->set('root', $rootPath . '/');
 		$cfg['paths']->data('sessions', $cfg['paths']->assets . "sessions/");
+		$cfg['paths']->data('classes', $cfg['paths']->site . "classes/");
 
 		// Styles and scripts are CSS and JS files, as used by the admin application.
 	 	// But reserved here if needed by other apps and templates.

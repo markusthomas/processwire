@@ -8,7 +8,7 @@
  * This file is licensed under the MIT license
  * https://processwire.com/about/license/mit/
  *
- * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -17,7 +17,29 @@
  * Generic ProcessWire exception
  *
  */
-class WireException extends \Exception {}
+class WireException extends \Exception {
+	/**
+	 * Replace previously set message
+	 * 
+	 * @param string $message
+	 * @since 3.0.150
+	 * 
+	 */
+	protected function setMessage($message) {
+		$this->message = $message;
+	}
+
+	/**
+	 * Replace previously set code
+	 * 
+	 * @param int $code
+	 * @since 3.0.150
+	 * 
+	 */
+	protected function setCode($code) {
+		$this->code = $code;
+	}
+}
 
 /**
  * Thrown when access to a resource is not allowed
@@ -100,10 +122,29 @@ class Wire404Exception extends WireException {
 class WireDatabaseException extends WireException {}
 
 /**
+ * Thrown by DatabaseQuery classes on query exception
+ * 
+ * May have \PDOException populated with call to its getPrevious(); method, 
+ * in which can it also has same getCode() and getMessage() as \PDOException.
+ * 
+ * @since 3.0.156
+ * 
+ */
+class WireDatabaseQueryException extends WireException {}
+
+/**
  * Thrown when cross site request forgery detected by SessionCSRF::validate()
  *
  */
 class WireCSRFException extends WireException {}
+
+/**
+ * Thrown when fatal error from $files API var (or related) occurs
+ * 
+ * @since 3.0.178
+ *
+ */
+class WireFilesException extends WireException {}
 
 /**
  * Thrown when a requested Process or Process method is requested that doesn’t exist

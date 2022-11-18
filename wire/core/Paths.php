@@ -8,9 +8,10 @@
  * #pw-summary-paths-only These properties are only useful when accessed from `$config->paths` as they are not HTTP accessible as URLs. 
  * #pw-summary-urls-only These properties apply only to the `$urls` or `$config->urls`. Do not use them with `$config->paths`. 
  * #pw-summary-pagination These properties apply only to the `$urls` or `$config->urls` and only when pagination is active for the current request.
+ * #pw-var $urls
  * 
  * #pw-body = 
- * The Paths class is used by `$config->paths` and `$config->urls`. The `$config->paths` refers to server disk paths
+ * The Paths class is used by `$config->paths` and `$config->urls` (or just `$urls`). The `$config->paths` refers to server disk paths
  * while `$config->urls` refers to web server URLs. All of the same properties are present on both, though several properties
  * are only useful on one or the other (as outlined below). You can access a path or URL like this:
  * ~~~~~
@@ -46,9 +47,14 @@
  * In the examples on this page, you can replace the `$urls` variable with `$config->paths` if you need to get the server path
  * instead of a URL. As indicated earlier, `$urls` can aso be accessed at the more verbose `$config->urls` if you prefer. 
  * 
+ * > Please note in the property/method descriptions below that use the placeholder `$urls` refers to either `$config->paths` or 
+ * `$config->urls` (or the shorter alias `$urls`). So `$urls->files` (for example) in the definitions below can refer to either 
+ * `$config->paths->files` or `$config->urls->files` (or the shorter alias `$urls->files`). We use `$urls` here because it’s 
+ * just the shortest option for example purposes. 
+ * 
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  * 
  * This file is licensed under the MIT license
@@ -68,6 +74,7 @@
  * @property string $files Site-specific files: /site/assets/files/
  * @property string $tmp Temporary files: /site/assets/tmp/ #pw-group-paths-only
  * @property string $sessions Session files: /site/assets/sessions/ #pw-group-paths-only
+ * @property string $classes Site-specific class files: /site/classes/ #pw-group-paths-only
  *
  * The following properties are only in $config->urls
  * ==================================================
@@ -161,6 +168,7 @@ class Paths extends WireData {
 		static $_http = null;
 		if($key === 'root') return $this->_root;
 		$http = '';
+		$altKey = '';
 		if(is_object($key)) {
 			$key = "$key";
 		} else if(strpos($key, 'http') === 0) {
@@ -171,14 +179,18 @@ class Paths extends WireData {
 				if($httpHost) $_http = "$scheme://$httpHost";
 			}
 			$http = $_http;
-			$key = substr($key, 4);
-			$key[0] = strtolower($key[0]);
+			$key = substr($key, 4); // httpTemplates => Templates
+			$altKey = $key; // no lowercase conversion (useful for keys like module names, i.e. 'ProcessPageEdit')
+			$key[0] = strtolower($key[0]);  // first character lowercase: Templates => templates
 		}
 		if($key === 'root') {
 			$value = $http . $this->_root;
 		} else {
 			$value = parent::get($key);
-			if($value === null || !strlen($value)) return $value;
+			if($value === null || !strlen($value)) {
+				if($altKey) $value = parent::get($altKey);
+				if(empty($value)) return $value;
+			}
 			$pos = strpos($value, '//');
 			if($pos !== false && ($pos === 0 || ($pos > 0 && $value[$pos-1] === ':'))) {
 				// fully qualified URL

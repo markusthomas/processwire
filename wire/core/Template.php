@@ -7,7 +7,7 @@
  * #pw-body Template objects also maintain several properties which can affect the render behavior of pages using it. 
  * #pw-order-groups identification,manipulation,family,URLs,access,files,cache,page-editor,behaviors,other
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  * 
  * @todo add multi-language option for redirectLogin setting
@@ -50,7 +50,7 @@
  * @property array $createRoles Array of Role IDs that may create pages using this template. #pw-group-access
  * @property array $rolesPermissions Override permissions: Array indexed by role ID with values as permission ID (add) or negative permission ID (revoke). #pw-group-access
  * @property int $noInherit Disable role inheritance? Specify 1 to prevent edit/create/add access from inheriting to children, or 0 for default inherit behavior. #pw-group-access
- * @property int $redirectLogin Redirect when no access: 0 = 404, 1 = login page, url = URL to redirect to. #pw-group-access
+ * @property int $redirectLogin Redirect when no access: 0 = 404, 1 = login page, url = URL to redirect to, int(>1) = ID of page to redirect to. #pw-group-access
  * @property int $guestSearchable Pages appear in search results even when user doesnt have access? (0=no, 1=yes) #pw-group-access
  * 
  * Family
@@ -69,8 +69,8 @@
  * @property int|string $urlSegments Allow URL segments on pages? (0=no, 1=yes (all), string=space separted list of segments to allow) #pw-group-URLs
  * @property int $https Use https? (0 = http or https, 1 = https only, -1 = http only) #pw-group-URLs
  * @property int $slashUrls Page URLs should have a trailing slash? 1 = yes, 0 = no	 #pw-group-URLs
- * @property string|int $slashPageNum Should PageNum segments have a trailing slash? (blank=either, 1=yes, 0=no) applies only if allowPageNum!=0. #pw-group-URLs
- * @property string|int $slashUrlSegments Should last URL segment have a trailing slash? (blank=either, 1=yes, 0=no) applies only if urlSegments!=0. #pw-group-URLs
+ * @property string|int $slashPageNum Should PageNum segments have a trailing slash? (0=either, 1=yes, -1=no) applies only if allowPageNum!=0. #pw-group-URLs
+ * @property string|int $slashUrlSegments Should last URL segment have a trailing slash? (0=either, 1=yes, -1=no) applies only if urlSegments!=0. #pw-group-URLs
  * 
  * Files
  * 
@@ -81,7 +81,7 @@
  * @property int|bool $noAppendTemplateFile Disabe automatic append of $config->appendTemplateFile (if in use).  #pw-group-files
  * @property string $prependFile File to prepend to template file (separate from $config->prependTemplateFile).  #pw-group-files
  * @property string $appendFile File to append to template file (separate from $config->appendTemplateFile).  #pw-group-files
- * @property bool $pagefileSecure Use secure pagefiles for pages using this template? (3.0.150+) #pw-group-files
+ * @property int $pagefileSecure Use secure pagefiles for pages using this template? 0=No/not set, 1=Yes (for non-public pages), 2=Always (3.0.166+) #pw-group-files
  * 
  * Page Editor
  * 
@@ -106,10 +106,11 @@
  * Other
  * 
  * @property int $compile Set to 1 to enable compilation, 2 to compile file and included files, 3 for auto, or 0 to disable.  #pw-group-other
- * @property string $tags Optional tags that can group this template with others in the admin templates list. #pw-group-other 
+ * @property string $tags Optional tags that can group this template with others in the admin templates list. #pw-group-tags
  * @property string $pageLabelField CSV or space separated string of field names to be displayed by ProcessPageList (overrides those set with ProcessPageList config). #pw-group-other
  * @property int|bool $_importMode Internal use property set by template importer when importing #pw-internal
  * @property int|null $connectedFieldID ID of connected field or null or 0 if not applicable. #pw-internal
+ * @property string $editUrl URL to edit template, for administrator. #pw-internal
  * 
  * Hookable methods
  * 
@@ -199,6 +200,14 @@ class Template extends WireData implements Saveable, Exportable {
 	protected $_roles = null;
 
 	/**
+	 * Loaded state
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $loaded = true;
+
+	/**
 	 * The template's settings, as they relate to database schema
 	 *
 	 */
@@ -208,7 +217,7 @@ class Template extends WireData implements Saveable, Exportable {
 		'fieldgroups_id' => 0, 
 		'flags' => 0,
 		'cache_time' => 0, 
-		); 
+	); 
 
 	/**
 	 * Array where get/set properties are stored
@@ -264,7 +273,7 @@ class Template extends WireData implements Saveable, Exportable {
 		'noAppendTemplateFile' => 0, // disable automatic inclusion of $config->appendTemplateFile
 		'prependFile' => '', // file to prepend (relative to /site/templates/)
 		'appendFile' => '', // file to append (relative to /site/templates/)
-		'pagefileSecure' => false, // secure files connected with page? (3.0.150+)
+		'pagefileSecure' => 0, // secure files connected with page? 0=Off, 1=Yes for unpub/non-public pages, 2=Always (3.0.166+)
 		'tabContent' => '', 	// label for the Content tab (if different from 'Content')
 		'tabChildren' => '', 	// label for the Children tab (if different from 'Children')
 		'nameLabel' => '', // label for the "name" property of the page (if something other than "Name")
@@ -272,8 +281,24 @@ class Template extends WireData implements Saveable, Exportable {
 		'errorAction' => 0, // action to take on save when required field on published page is empty (0=notify,1=restore,2=unpublish)
 		'connectedFieldID' => null, // ID of connected field or null if not applicable
 		'ns' => '', // namespace found in the template file, or blank if not determined
-		); 
+	);
 
+	/**
+	 * Get or set loaded state
+	 * 
+	 * When loaded state is false, we bypass some internal validations/checks that don’t need to run while booting
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param bool|null $loaded
+	 * @return bool
+	 * @since 3.0.153
+	 * 
+	 */
+	public function loaded($loaded = null) {
+		if($loaded !== null) $this->loaded = (bool) $loaded;
+		return $this->loaded;
+	}
 
 	/**
 	 * Get a Template property
@@ -286,16 +311,39 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function get($key) {
 
-		if($key == 'filename') return $this->filename();
-		if($key == 'fields') $key = 'fieldgroup';
-		if($key == 'fieldgroup') return $this->fieldgroup; 
-		if($key == 'fieldgroupPrevious') return $this->fieldgroupPrevious; 
-		if($key == 'roles') return $this->getRoles();
-		if($key == 'cacheTime') $key = 'cache_time'; // for camel case consistency
-		if($key == 'icon') return $this->getIcon();
-		if($key == 'urlSegments') return $this->urlSegments();
+		if($key === 'filename') return $this->filename();
+		if($key === 'fields') $key = 'fieldgroup';
+		if($key === 'fieldgroup') return $this->fieldgroup; 
+		if($key === 'fieldgroupPrevious') return $this->fieldgroupPrevious; 
+		if($key === 'roles') return $this->getRoles();
+		if($key === 'cacheTime') $key = 'cache_time'; // for camel case consistency
+		if($key === 'icon') return $this->getIcon();
+		if($key === 'urlSegments') return $this->urlSegments();
+		if($key === 'editUrl') return $this->editUrl();
 
 		return isset($this->settings[$key]) ? $this->settings[$key] : parent::get($key); 
+	}
+	
+	/**
+	 * Given different ways to refer to a role type return array of type, property and permission name
+	 *
+	 * @param string|Permission $type
+	 * @return array Returns array of [ typeName, propertyName, permissionName ]
+	 * @since 3.0.153
+	 *
+	 */
+	protected function roleTypeNames($type) {
+		if(is_object($type) && $type instanceof Page) $type = $type->name;
+		if($type === 'view' || $type === 'roles' || $type === 'viewRoles' || $type === 'page-view') {
+			return array('view', 'roles', 'page-view');
+		} else if($type === 'edit' || $type === 'page-edit' || $type === 'editRoles') {
+			return array('edit', 'editRoles', 'page-edit');
+		} else if($type === 'create' || $type === 'page-create' || $type === 'createRoles') {
+			return array('create', 'createRoles', 'page-create');
+		} else if($type === 'add' || $type === 'page-add' || $type === 'addRoles') {
+			return array('add', 'addRoles', 'page-add');
+		}
+		return array('','','');
 	}
 
 	/**
@@ -316,34 +364,27 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function getRoles($type = 'view') {
 
-		if(strpos($type, 'page-') === 0) $type = str_replace('page-', '', $type);
-		
 		if($type !== 'view') {
-			$roleIDs = null;
-			if($type === 'edit') {
-				$roleIDs = $this->editRoles;
-			} else if($type === 'create') {
-				$roleIDs = $this->createRoles;
-			} else if($type === 'add') {
-				$roleIDs = $this->addRoles;
-			} else {
-				throw new WireException("Unknown roles type: $type");
+			list($name, $propertyName, /*permissionName*/) = $this->roleTypeNames($type);
+			if($name !== 'view') {
+				if(empty($name)) throw new WireException("Unknown roles type: $type");
+				$roleIDs = $this->$propertyName;
+				if(empty($roleIDs)) return $this->wire()->pages->newPageArray();
+				return $this->wire()->pages->getById($roleIDs);
 			}
-			if(empty($roleIDs)) return $this->wire('pages')->newPageArray();
-			return $this->wire('pages')->getById($roleIDs);
 		}
 
 		// type=view assumed from this point forward
 		
 		if(is_null($this->_roles)) {
-			return $this->wire('pages')->newPageArray();
+			return $this->wire()->pages->newPageArray();
 
 		} else if($this->_roles instanceof PageArray) {
 			return $this->_roles;
 		
 		} else if(is_array($this->_roles)) {
 			$errors = array();
-			$roles = $this->wire('pages')->newPageArray();
+			$roles = $this->wire()->pages->newPageArray();
 			if(count($this->_roles)) {
 				$test = implode('0', $this->_roles); // test to see if it's all digits (IDs)
 				if(ctype_digit("$test")) {
@@ -351,7 +392,7 @@ class Template extends WireData implements Saveable, Exportable {
 				} else {
 					// role names
 					foreach($this->_roles as $name) {
-						$role = $this->wire('roles')->get($name); 
+						$role = $this->wire()->roles->get($name); 
 						if($role->id) {
 							$roles->add($role); 
 						} else {
@@ -364,7 +405,7 @@ class Template extends WireData implements Saveable, Exportable {
 			$this->_roles = $roles;
 			return $this->_roles;
 		} else {
-			return $this->wire('pages')->newPageArray();
+			return $this->wire()->pages->newPageArray();
 		}
 	}
 
@@ -384,11 +425,10 @@ class Template extends WireData implements Saveable, Exportable {
 	 *
 	 */
 	public function hasRole($role, $type = 'view') {
+		list($type, $property, /*permissionName*/) = $this->roleTypeNames($type);
 		$has = false;
 		$roles = $this->getRoles();
 		$rolePage = null;
-		if(is_object($type) && $type instanceof Page) $type = $type->name;
-		if(strpos($type, 'page-') === 0) $type = str_replace('page-', '', $type);
 		if(is_string($role)) {
 			$has = $roles->has("name=$role");
 		} else if(is_int($role)) {
@@ -398,17 +438,11 @@ class Template extends WireData implements Saveable, Exportable {
 			$has = $roles->has($role);
 			$rolePage = $role;
 		}
-		if($type == 'view') return $has;
+		if($type === 'view') return $has;
 		if(!$has) return false; // page-view is a pre-requisite
-		if(!$rolePage || !$rolePage->id) $rolePage = $this->wire('roles')->get($role);
+		if(!$rolePage || !$rolePage->id) $rolePage = $this->wire()->roles->get($role);
 		if(!$rolePage->id) return false;
-		if($type === 'edit') {
-			$has = in_array($rolePage->id, $this->editRoles);
-		} else if($type === 'create') {
-			$has = in_array($rolePage->id, $this->createRoles);
-		} else if($type == 'add') {
-			$has = in_array($rolePage->id, $this->addRoles);
-		}
+		$has = $property ? in_array($rolePage->id, $this->$property) : false; 
 		return $has;
 	}
 
@@ -428,34 +462,93 @@ class Template extends WireData implements Saveable, Exportable {
 	 *
 	 */
 	public function setRoles($value, $type = 'view') {
-		if($type === 'view' || $type === 'page-view') {
+		
+		list($type, $property, /* permissionName */) = $this->roleTypeNames($type);
+		
+		if(empty($property)) {
+			// @todo Some other $type, delegate to permissionByRole
+			return;
+		}
+		
+		if($type === 'view') {
 			if(is_array($value) || $value instanceof PageArray) {
 				$this->_roles = $value;
 			}
-		} else if(WireArray::iterable($value)) {
-			$roleIDs = array();
-			foreach($value as $v) {
-				if(is_int($v)) {
-					$id = $v;
-				} else if(is_string($v) && ctype_digit($v)) {
+			return;
+		} 
+		
+		if(!WireArray::iterable($value)) $value = array();
+		
+		$roleIDs = array();
+		$roles = null;
+		
+		foreach($value as $v) {
+			$id = 0;
+			if(is_int($v)) {
+				$id = $v;
+			} else if(is_string($v)) { 
+				if(ctype_digit($v)) {
 					$id = (int) $v;
-				} else if($v instanceof Page) {
-					$id = $v->id;
 				} else {
-					continue;
+					if($roles === null) $roles = $this->wire()->roles;
+					$id = $roles ? (int) $roles->get($v)->id : 0;
+					if(!$id && $this->_importMode && $this->useRoles) {
+						$this->error("Unable to load role '$v' for '$this.$type'");
+					}
 				}
-				$roleIDs[] = $id;	
+			} else if($v instanceof Page) {
+				$id = (int) $v->id;
 			}
-			if($type == 'edit' || $type == 'page-edit') {
-				$this->set('editRoles', $roleIDs);
-			} else if($type == 'create' || $type == 'page-create') {
-				$this->set('createRoles', $roleIDs);
-			} else if($type == 'add' || $type == 'page-add') {
-				$this->set('addRoles', $roleIDs);
-			} else {
-				// @todo Some other $type, delegate to permissionByRole
+			if($id) $roleIDs[] = $id;	
+		}
+
+		parent::set($property, $roleIDs);
+	}
+
+	/**
+	 * Set roles/permissions
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param array $value
+	 * @since 3.0.153
+	 * 
+	 */
+	protected function setRolesPermissions($value) {
+		
+		if(!is_array($value)) $value = array();
+		$a = array();
+		
+		foreach($value as $roleID => $permissionIDs) {
+			
+			if(!ctype_digit("$roleID")) {
+				// convert role name to ID
+				$roleID = $this->wire()->roles->get("name=$roleID")->id;
+			}
+			
+			if(!$roleID) continue;
+			
+			foreach($permissionIDs as $permissionID) {
+			
+				$test = ltrim($permissionID, '-');
+				if(!ctype_digit($test)) {
+					// convert permission name to ID
+					$revoke = strpos($permissionID, '-') === 0;
+					$permissionID = $this->wire()->permissions->get("name=$test")->id;
+					if(!$permissionID) continue;
+					if($revoke) $permissionID = "-$permissionID";
+				}
+				
+				// we force these as strings so that they can portable in JSON
+				$roleID = (string) ((int) $roleID);
+				$permissionID = (string) ((int) $permissionID);
+				
+				if(!isset($a[$roleID])) $a[$roleID] = array();
+				$a[$roleID][] = $permissionID;
 			}
 		}
+		
+		parent::set('rolesPermissions', $a);
 	}
 
 	/**
@@ -468,7 +561,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function addRole($role, $type = 'view') {
-		if(is_int($role) || is_string($role)) $role = $this->wire('roles')->get($role); 
+		if(is_int($role) || is_string($role)) $role = $this->wire()->roles->get($role); 
 		if(!$role instanceof Role) throw new WireException("addRole requires Role instance, name or id");
 		$roles = $this->getRoles($type);	
 		if(!$roles->has($role)) {
@@ -491,7 +584,7 @@ class Template extends WireData implements Saveable, Exportable {
 	public function removeRole($role, $type = 'view') {
 		
 		if(is_int($role) || is_string($role)) {
-			$role = $this->wire('roles')->get($role);
+			$role = $this->wire()->roles->get($role);
 		}
 		
 		if(!$role instanceof Role) {
@@ -532,7 +625,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function addPermissionByRole($permission, $role, $test = false) {
-		return $this->wire('templates')->setTemplatePermissionByRole($this, $permission, $role, false, $test); 
+		return $this->wire()->templates->setTemplatePermissionByRole($this, $permission, $role, false, $test); 
 	}
 
 	/**
@@ -547,7 +640,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 *
 	 */
 	public function revokePermissionByRole($permission, $role, $test = false) {
-		return $this->wire('templates')->setTemplatePermissionByRole($this, $permission, $role, true, $test); 
+		return $this->wire()->templates->setTemplatePermissionByRole($this, $permission, $role, true, $test); 
 	}
 	
 	/**
@@ -582,38 +675,13 @@ class Template extends WireData implements Saveable, Exportable {
 			$this->setFlags($value); 
 
 		} else if(isset($this->settings[$key])) { 
-
-			if($key == 'id') {
-				$value = (int) $value; 
-			} else if($key == 'name') {
-				$value = $this->wire('sanitizer')->name($value); 
-			} else if($key == 'fieldgroups_id' && $value) {
-				$fieldgroup = $this->wire('fieldgroups')->get($value); 
-				if($fieldgroup) $this->setFieldgroup($fieldgroup); 
-					else $this->error("Unable to load fieldgroup '$value' for template $this->name"); 
-				return $this;
-			} else if($key == 'cache_time') {
-				$value = (int) $value; 
-			} else {
-				$value = '';
-			}
-
-			if($this->settings[$key] != $value) {
-				if($this->settings[$key] && ($this->settings['flags'] & Template::flagSystem) && in_array($key, array('id', 'name'))) {
-					throw new WireException("Template '$this' has the system flag and you may not change its 'id' or 'name' fields. "); 
-				}
-				$this->trackChange($key, $this->settings[$key], $value); 
-			}
-			$this->settings[$key] = $value; 
+			$this->setSetting($key, $value); 
 
 		} else if($key == 'fieldgroup' || $key == 'fields') {
 			$this->setFieldgroup($value); 
 			
 		} else if($key == 'filename') {
 			$this->filename($value); 
-
-		} else if($key == 'roles') {
-			$this->setRoles($value);
 
 		} else if($key == 'childrenTemplatesID') { // this can eventaully be removed
 			if($value < 0) {
@@ -625,84 +693,29 @@ class Template extends WireData implements Saveable, Exportable {
 			}
 
 		} else if($key == 'sortfield') {
-			$value = $this->wire('pages')->sortfields()->decode($value, '');	
-			parent::set($key, $value); 
-
-		} else if(in_array($key, array('addRoles', 'editRoles', 'createRoles'))) {
-			if(!is_array($value)) $value = array();
-			foreach($value as $k => $v) {
-				if(!is_int($v)) {
-					if(is_object($v)) {
-						$v = $v->id;
-					} else if(is_string($v) && !ctype_digit("$v")) {
-						$role = $this->wire('roles')->get($v);
-						if(!$role->id && $this->_importMode && $this->useRoles) $this->error("Unable to load role: $v");
-						$v = $role->id;
-					}
-				}
-				if($v) $value[(int) $k] = (int) $v;
-			}
+			$value = $this->wire()->pages->sortfields()->decode($value, '');
 			parent::set($key, $value);
 
-		} else if($key == 'rolesPermissions') {
-			if(!is_array($value)) $value = array();
-			$_value = array();
-			foreach($value as $roleID => $permissionIDs) {
-				// if any one of these happened to be a role name or permission name, convert to IDs
-				if(!ctype_digit("$roleID")) $roleID = $this->wire('roles')->get("name=$roleID")->id;
-				if(!$roleID) continue;
-				foreach($permissionIDs as $permissionID) {
-					if(!ctype_digit(ltrim($permissionID, '-'))) {
-						$revoke = strpos($permissionID, '-') === 0;
-						$permissionID = $this->wire('permissions')->get("name=" . ltrim($permissionID, '-'))->id;
-						if(!$permissionID) continue;
-						if($revoke) $permissionID = "-$permissionID";
-					}
-					// we force these as strings so that they can portable in JSON
-					$roleID = (string) ((int) $roleID);
-					$permissionID = (string) ((int) $permissionID);
-					if(!isset($_value[$roleID])) $_value[$roleID] = array();
-					$_value[$roleID][] = $permissionID;
-				}
-			}
-			parent::set($key, $_value);
-			
-		} else if(in_array($key, array('childTemplates', 'parentTemplates'))) {
-			if(!is_array($value)) $value = array();
-			foreach($value as $k => $v) {
-				if(!is_int($v)) {
-					if(is_object($v)) {
-						$v = $v->id; 
-					} else if(!ctype_digit("$v")) {
-						$t = $this->wire('templates')->get($v);
-						if(!$t && $this->_importMode) {
-							$this->error("Unable to load template '$v' for '$this->name.$key'"); 
-						}
-						$v = $t ? $t->id : 0; 
-					}
-				}
-				if($v) $value[(int)$k] = (int) $v; 
-			}
-			parent::set($key, $value); 
+		} else if($key === 'roles' || $key === 'addRoles' || $key === 'editRoles' || $key === 'createRoles') {
+			$this->setRoles($value, $key);
 
-		} else if(in_array($key, array('noChildren', 'noParents'))) {
+		} else if($key === 'rolesPermissions') {
+			$this->setRolesPermissions($value);
+			
+		} else if($key === 'childTemplates' || $key === 'parentTemplates') {
+			if($this->loaded) {
+				$this->familyTemplates($key, $value);
+			} else {
+				parent::set($key, $value);
+			}
+
+		} else if($key === 'noChildren' || $key === 'noParents') {
 			$value = (int) $value;
 			if(!$value) $value = null; // enforce null over 0
 			parent::set($key, $value);
 			
 		} else if($key == 'cacheExpirePages') {
-			if(!is_array($value)) $value = array();
-			foreach($value as $k => $v) {
-				if(is_object($v)) {
-					$v = $v->id;
-				} else if(!ctype_digit("$v")) {
-					$p = $this->wire('pages')->get($v);
-					if(!$p->id) $this->error("Unable to load page: $v");
-					$v = $p->id;
-				}
-				$value[(int) $k] = (int) $v;
-			}
-			parent::set($key, $value);
+			$this->setCacheExpirePages($value);
 
 		} else if($key == 'icon') {
 			$this->setIcon($value);
@@ -718,6 +731,96 @@ class Template extends WireData implements Saveable, Exportable {
 		}
 
 		return $this; 
+	}
+
+	/**
+	 * Set a setting
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param string $key
+	 * @param mixed $value
+	 * @since 3.0.153
+	 * @throws WireException
+	 * 
+	 */
+	protected function setSetting($key, $value) {
+		
+		if($key === 'id') {
+			$value = (int) $value;
+			
+		} else if($key === 'name') {
+			$value = $this->loaded ? $this->wire()->sanitizer->templateName($value) : $value;
+			
+		} else if($key === 'fieldgroups_id' && $value) {
+			$fieldgroup = $this->wire()->fieldgroups->get($value);
+			if($fieldgroup) {
+				$this->setFieldgroup($fieldgroup);
+			} else {
+				$this->error("Unable to load fieldgroup '$value' for template $this->name");
+			}
+			return;
+			
+		} else if($key == 'cache_time') {
+			$value = (int) $value;
+		} else {
+			// unknown or invalid setting
+			$value = '';
+		}
+
+		if($this->loaded && $this->settings[$key] != $value) {
+			if(($key === 'id' || $key === 'name') && $this->settings[$key] && ($this->settings['flags'] & Template::flagSystem)) {
+				throw new WireException("Template '$this' has the system flag and you may not change its 'id' or 'name' settings.");
+			}
+			$this->trackChange($key, $this->settings[$key], $value);
+		}
+
+		$this->settings[$key] = $value; 
+	}
+
+	/**
+	 * Set setting value without processing
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param string $key
+	 * @param mixed $value
+	 * @since 3.0.194
+	 * 
+	 */
+	public function setRaw($key, $value) {
+		if($key === 'fieldgroups_id') {
+			$fieldgroup = $this->wire()->fieldgroups->get($value);
+			if($fieldgroup) {
+				$this->settings['fieldgroups_id'] = (int) $value;
+				$this->fieldgroup = $fieldgroup;
+			}
+		} else if(isset($this->settings[$key])) {
+			$this->settings[$key] = $value;
+		} else {
+			parent::set($key, $value);
+		}
+	}
+
+	/**
+	 * Set the cacheExpirePages property
+	 * 
+	 * @param array $value
+	 *
+	 */
+	protected function setCacheExpirePages($value) {
+		if(!is_array($value)) $value = array();
+		foreach($value as $k => $v) {
+			if(is_object($v)) {
+				$v = $v->id;
+			} else if(!ctype_digit("$v")) {
+				$p = $this->wire()->pages->get($v);
+				if(!$p->id) $this->error("Unable to load page: $v");
+				$v = $p->id;
+			}
+			$value[(int) $k] = (int) $v;
+		}
+		parent::set('cacheExpirePages', $value);
 	}
 
 	/**
@@ -773,6 +876,42 @@ class Template extends WireData implements Saveable, Exportable {
 		
 		return $value; 
 	}
+	
+	/**
+	 * Is the given URL segment string allowed according to this template’s settings?
+	 * 
+	 * #pw-group-URLs
+	 *
+	 * @param string $urlSegmentStr
+	 * @return bool
+	 * @since 3.0.186
+	 *
+	 */
+	public function isValidUrlSegmentStr($urlSegmentStr) {
+
+		$rules = $this->urlSegments();
+		$valid = false;
+
+		if(is_array($rules)) {
+			// only specific URL segments are allowed
+			$urlSegmentStr = trim($urlSegmentStr, '/');
+			foreach($rules as $rule) {
+				if(stripos($rule, 'regex:') === 0) {
+					$regex = '{' . trim(substr($rule, 6)) . '}';
+					$valid = preg_match($regex, $urlSegmentStr);
+				} else if($urlSegmentStr === $rule) {
+					$valid = true;
+				}
+				if($valid) break;
+			}
+		} else if($rules > 0 || $this->name === 'admin') {
+			// all URL segments are allowed
+			$valid = true;
+		}
+
+		return $valid;
+	}
+
 
 	/**
 	 * Set the flags for this Template
@@ -817,24 +956,30 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function setFieldgroup(Fieldgroup $fieldgroup) {
 
-		if(is_null($this->fieldgroup) || $fieldgroup->id != $this->fieldgroup->id) $this->trackChange('fieldgroup', $this->fieldgroup, $fieldgroup); 
+		if($this->fieldgroup === null || $fieldgroup->id != $this->fieldgroup->id) {
+			if($this->loaded) $this->trackChange('fieldgroup', $this->fieldgroup, $fieldgroup);
+		}
 
 		if($this->fieldgroup && $fieldgroup->id != $this->fieldgroup->id) {
 			// save record of the previous fieldgroup so that unused fields can be deleted during save()
 			$this->fieldgroupPrevious = $this->fieldgroup; 
 
-			if($this->flags & Template::flagSystem) 
-				throw new WireException("Can't change fieldgroup for template '{$this}' because it is a system template."); 
+			if($this->flags & Template::flagSystem) {
+				throw new WireException("Can't change fieldgroup for template '{$this}' because it is a system template.");
+			}
 
 			$hasPermanentFields = false;
 			foreach($this->fieldgroup as $field) {
 				if($field->flags & Field::flagPermanent) $hasPermanentFields = true; 
 			}
-			if($this->id && $hasPermanentFields) throw new WireException("Fieldgroup for template '{$this}' may not be changed because it has permanent fields."); 
+			if($this->id && $hasPermanentFields) {
+				throw new WireException("Fieldgroup for template '{$this}' may not be changed because it has permanent fields.");
+			}
 		}
 
 		$this->fieldgroup = $fieldgroup;
 		$this->settings['fieldgroups_id'] = $fieldgroup->id; 
+		
 		return $this; 
 	}
 
@@ -847,7 +992,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 *
 	 */
 	public function getNumPages() {
-		return $this->wire('templates')->getNumPages($this); 	
+		return $this->wire()->templates->getNumPages($this); 	
 	}
 
 	/**
@@ -862,7 +1007,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function save() {
 
-		$result = $this->wire('templates')->save($this); 	
+		$result = $this->wire()->templates->save($this); 	
 
 		return $result ? $this : false; 
 	}
@@ -879,8 +1024,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function filename($filename = null) {
 
-		/** @var Config $config */
-		$config = $this->wire('config');
+		$config = $this->wire()->config;
 		$path = $config->paths->templates;
 		
 		if($filename !== null) {
@@ -929,10 +1073,8 @@ class Template extends WireData implements Saveable, Exportable {
 				}
 				if($isModified || !$this->ns) {
 					// determine namespace
-					$files = $this->wire('files');
-					/** @var WireFileTools $files */
-					$templates = $this->wire('templates');
-					/** @var Templates $templates */
+					$files = $this->wire()->files;
+					$templates = $this->wire()->templates;
 					$this->ns = $files->getNamespace($filename);
 					$templates->fileModified($this);
 				}
@@ -951,7 +1093,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function hookFinished(HookEvent $e) {
-		foreach($e->wire('templates') as $template) {
+		foreach($e->wire()->templates as $template) {
 			if($template->isChanged('modified') || $template->isChanged('ns')) $template->save();
 		}
 	}
@@ -1004,7 +1146,9 @@ class Template extends WireData implements Saveable, Exportable {
 		$tableData = $this->settings; 
 		$data = $this->getArray();
 		// ensure sortfield is a signed integer or native name, rather than a custom fieldname
-		if(!empty($data['sortfield'])) $data['sortfield'] = $this->wire('pages')->sortfields()->encode($data['sortfield'], ''); 
+		if(!empty($data['sortfield'])) {
+			$data['sortfield'] = $this->wire()->pages->sortfields()->encode($data['sortfield'], '');
+		}
 		$tableData['data'] = $data; 
 		
 		return $tableData; 
@@ -1017,7 +1161,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function getExportData() {
-		return $this->wire('templates')->getExportData($this); 	
+		return $this->wire()->templates->getExportData($this); 	
 	}
 
 	/**
@@ -1036,7 +1180,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function setImportData(array $data) {
-		return $this->wire('templates')->setImportData($this, $data); 
+		return $this->wire()->templates->setImportData($this, $data); 
 	}
 	
 	/**
@@ -1047,9 +1191,107 @@ class Template extends WireData implements Saveable, Exportable {
 		return $this->name; 
 	}
 
+	/**
+	 * Get or set parent templates (templates allowed for parent pages of pages using this template)
+	 * 
+	 * - May be specified as template IDs or names in an array, or Template objects in a TemplatesArray. 
+	 * - To allow any template as parent, specify a blank array. 
+	 * - To disallow any parents (other than what’s already in use) set the `$template->noParents` property to 1.
+	 * 
+	 * #pw-group-family
+	 *
+	 * @param array|TemplatesArray|null $setValue Specify only when setting, an iterable value containing Template objects, IDs or names
+	 * @return TemplatesArray
+	 * @since 3.0.153
+	 * 
+	 */
+	public function parentTemplates($setValue = null) {
+		return $this->familyTemplates('parentTemplates', $setValue);	
+	}
+	
+	/**
+	 * Get or set child templates (templates allowed for children of pages using this template)
+	 * 
+	 * - May be specified as template IDs or names in an array, or Template objects in a TemplatesArray.
+	 * - To allow any template to be used for children, specify a blank array.
+	 * - To disallow any children (other than what’s already in use) set the `$template->noChildren` property to 1.
+	 * 
+	 * #pw-group-family
+	 *
+	 * @param array|TemplatesArray|null $setValue Specify only when setting, an iterable value containing Template objects, IDs or names
+	 * @return TemplatesArray
+	 * @since 3.0.153
+	 *
+	 */
+	public function childTemplates($setValue = null) {
+		return $this->familyTemplates('childTemplates', $setValue);	
+	}
 
 	/**
-	 * Return the parent page that this template assumes new pages are added to .
+	 * Get or set childTemplates or parentTemplates
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param string $property Specify either 'childTemplates' or 'parentTemplates'
+	 * @param array|TemplatesArray|null $setValue Iterable value containing Template objects, IDs or names
+	 * @return TemplatesArray
+	 * @since 3.0.153
+	 * 
+	 */
+	protected function familyTemplates($property, $setValue = null) {
+		
+		$templates = $this->wire()->templates;
+		$value = new TemplatesArray();
+		$this->wire($value);
+		
+		if($setValue !== null && WireArray::iterable($setValue)) {
+			// set
+			$ids = array();
+			foreach($setValue as $v) {
+				$template = $v instanceof Template ? $v : $templates->get($v);
+				if($template) {
+					$ids[$template->id] = $template->id;
+					$value->add($template);
+				} else if($this->_importMode) {
+					$this->error("Unable to load template '$v' for '$this->name.$property'");
+				}
+			}
+			parent::set($property, array_values($ids));
+		} else {
+			// get
+			foreach($this->$property as $id) {
+				$template = $templates->get((int) $id);
+				if($template) $value->add($template);
+			}
+		}
+		
+		return $value; 
+	}
+	
+	/**
+	 * Allow new pages that use this template?
+	 * 
+	 * #pw-group-family
+	 * 
+	 * @return bool
+	 * @since 3.0.153
+	 * 
+	 */
+	public function allowNewPages() {
+		$pages = $this->wire()->pages;
+		$noParents = (int) $this->noParents;
+		if($noParents === 1) {
+			// no new pages may be created
+			return false;
+		} else if($noParents === -1) {
+			// only one may exist
+			if($pages->has("template=$this")) return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Return the parent page that this template assumes new pages are added to 
 	 *
 	 * This is based on family settings, when applicable. 
 	 * It also takes into account user access, if requested (see arg 1). 
@@ -1064,7 +1306,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 *
 	 */
 	public function getParentPage($checkAccess = false) {
-		return $this->wire('templates')->getParentPage($this, $checkAccess); 
+		return $this->wire()->templates->getParentPage($this, $checkAccess); 
 	}
 
 	/**
@@ -1077,7 +1319,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function getParentPages($checkAccess = false) {
-		return $this->wire('templates')->getParentPages($this, $checkAccess);
+		return $this->wire()->templates->getParentPages($this, $checkAccess);
 	}
 
 	/**
@@ -1094,12 +1336,14 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function getLabel($language = null) {
-		if(is_null($language)) $language = $this->wire('languages') ? $this->wire('user')->language : null;
+		if(is_null($language)) {
+			$language = $this->wire()->languages ? $this->wire()->user->language : null;
+		}
 		if($language) {
-			$label = $this->get("label$language"); 
+			$label = (string) $this->get("label$language"); 
 			if(!strlen($label)) $label = $this->label;
 		} else {
-			$label = $this->label;
+			$label = (string) $this->label;
 		}
 		if(!strlen($label)) $label = $this->name;
 		return $label;
@@ -1117,7 +1361,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function getTabLabel($tab, $language = null) {
 		$tab = ucfirst(strtolower($tab)); 
-		if(is_null($language)) $language = $this->wire('languages') ? $this->wire('user')->language : null;
+		if(is_null($language)) $language = $this->wire()->languages ? $this->wire()->user->language : null;
 		if(!$language || $language->isDefault()) $language = '';
 		$label = $this->get("tab$tab$language");
 		return $label;
@@ -1133,7 +1377,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function getNameLabel($language = null) {
-		if(is_null($language)) $language = $this->wire('languages') ? $this->wire('user')->language : null;
+		if(is_null($language)) $language = $this->wire()->languages ? $this->wire()->user->language : null;
 		if(!$language || $language->isDefault()) $language = '';
 		return $this->get("nameLabel$language");
 	}
@@ -1168,14 +1412,116 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function getLanguages() {
-		/** @var Languages $languages */
-		$languages = $this->wire('languages');
+		$languages = $this->wire()->languages;
 		if(!$languages) return null;
 		if(!$this->noLang) return $languages;
-		$langs = $this->wire('pages')->newPageArray();
+		$langs = $this->wire()->pages->newPageArray();
 		// if noLang set, then only default language is included
 		$langs->add($languages->getDefault());
 		return $langs;
+	}
+	
+	/**
+	 * Get class name to use for Page objects using this template
+	 * 
+	 * Note that value can be different from the `$template->pageClass` property, since it is determined at runtime.
+	 * If it is different, then it is at least a class that extends the one defined by the pageClass property.
+	 *
+	 * #pw-group-identification
+	 *
+	 * @param bool $withNamespace Returned class includes namespace? (default=true)
+	 * @return string Returned page class includes namespace
+	 * @since 3.0.152
+	 *
+	 */
+	public function getPageClass($withNamespace = true) {
+		return $this->wire()->templates->getPageClass($this, $withNamespace);
+	}
+
+	/**
+	 * Get tags array
+	 * 
+	 * #pw-group-tags
+	 * 
+	 * @return array
+	 * @since 3.0.176
+	 * 
+	 */
+	public function getTags() {
+		$tags = array();
+		foreach(explode(' ', $this->tags) as $tag) {
+			if(!strlen($tag)) continue;
+			$tags[$tag] = $tag;
+		}
+		return $tags;
+	}
+
+	/**
+	 * Does this template have given tag?
+	 * 
+	 * #pw-group-tags
+	 *
+	 * @param string $tag
+	 * @return bool
+	 * @since 3.0.176
+	 *
+	 */
+	public function hasTag($tag) {
+		$tags = $this->getTags();
+		return isset($tags[$tag]); 
+	}
+
+	/**
+	 * Add tag
+	 * 
+	 * #pw-group-tags
+	 * 
+	 * @param string $tag
+	 * @return $this
+	 * @since 3.0.176
+	 * 
+	 */
+	public function addTag($tag) {
+		$tags = $this->getTags();
+		if(isset($tags[$tag])) return $this;
+		$tags[$tag] = $tag;
+		$this->set('tags', implode(' ', $tags));
+		return $this;
+	}
+
+	/**
+	 * Remove tag
+	 * 
+	 * #pw-group-tags
+	 * 
+	 * @param string $tag
+	 * @return self
+	 * @since 3.0.176
+	 * 
+	 */
+	public function removeTag($tag) {
+		$tags = $this->getTags();
+		if(!isset($tags[$tag])) return $this;
+		unset($tags[$tag]); 
+		$this->set('tags', implode(' ', $tags)); 
+		return $this;
+	}
+
+	/**
+	 * Check that all file asset paths are consistent with current pagefileSecure setting and access control
+	 * 
+	 * #pw-internal
+	 * 
+	 * @return int Returns quantity of renamed paths, or 0 if all is in order
+	 * @since 3.0.166
+	 * 
+	 */
+	public function checkPagefileSecure() {
+		PagefilesManager::numRenamedPaths(true);
+		foreach($this->wire()->pages->findMany("template=$this, include=all") as $p) {
+			PagefilesManager::_path($p);
+		}
+		return PagefilesManager::numRenamedPaths(true);
 	}
 
 	/**
@@ -1189,7 +1535,7 @@ class Template extends WireData implements Saveable, Exportable {
 	 */
 	public function setIcon($icon) {
 		// This manipulates the pageLabelField property, since there isn't actually an icon property. 
-		$icon = $this->wire('sanitizer')->pageName($icon); 
+		$icon = $this->wire()->sanitizer->pageName($icon); 
 		$current = $this->getIcon(false); 	
 		$label = $this->pageLabelField;
 		if(strpos($icon, "icon-") === 0) $icon = str_replace("icon-", "fa-", $icon); // convert icon-str to fa-str
@@ -1216,8 +1562,9 @@ class Template extends WireData implements Saveable, Exportable {
 	 * 
 	 */
 	public function ___getConnectedField() {
+		$fields = $this->wire()->fields;
 		if($this->connectedFieldID) {
-			$field = $this->wire('fields')->get((int) $this->connectedFieldID); 
+			$field = $fields->get((int) $this->connectedFieldID); 
 		} else {
 			$field = null;
 		}
@@ -1231,10 +1578,22 @@ class Template extends WireData implements Saveable, Exportable {
 				break;
 			}
 			if($fieldName) {
-				$field = $this->wire('fields')->get($fieldName);
+				$field = $fields->get($fieldName);
 			}
 		}
 		return $field;
+	}
+
+	/**
+	 * URL to edit template settings (for administrator)
+	 * 
+	 * @param bool $http Full http/https URL?
+	 * @return string
+	 * @since 3.0.170
+	 * 
+	 */
+	public function editUrl($http = false) {
+		return $this->wire()->config->urls($http ? 'httpAdmin' : 'admin') . "setup/template/edit?id=$this->id";
 	}
 
 	/**

@@ -723,8 +723,10 @@ function wireBytesStr($bytes, $small = false, $options = array()) {
 		$val = $bytes;
 		if($small) {
 			$label = $val > 0 ? __('B', __FILE__) : ''; // bytes
+		} else if($val == 1) {
+			$label = __('byte', __FILE__); // singular 1-byte
 		} else {
-			$label = __('bytes', __FILE__);
+			$label = __('bytes', __FILE__); // plural 2+ bytes (or 0 bytes)
 		}
 	} else if($bytes < 1000000 || $type === 'k') {
 		$val = $bytes / 1024;
@@ -809,6 +811,7 @@ function wireClassName($className, $withNamespace = false, $verbose = false) {
 		$object = null;
 	}
 
+	$className = (string) $className;
 	$pos = strrpos($className, $bs);
 
 	if($withNamespace === true) {
@@ -855,6 +858,103 @@ function wireClassName($className, $withNamespace = false, $verbose = false) {
 	}
 
 	return $className;
+}
+
+/**
+ * Get namespace for given class 
+ * 
+ * ~~~~~
+ * echo wireClassNamespace('Page'); // returns: "\ProcessWire\"
+ * echo wireClassNamespace('DirectoryIterator'); // returns: "\"
+ * echo wireClassNamespace('UnknownClass'); // returns "" (blank)
+ * 
+ * // Specify true for 2nd argument to make it include class name
+ * echo wireClassNamespace('Page', true); // outputs: \ProcessWire\Page
+ * 
+ * // Specify true for 3rd argument to find all matching classes 
+ * // and return array if more than 1 matches (or string if just 1): 
+ * $val = wireClassNamespace('Foo', true, true); 
+ * if(is_array($val)) {
+ *   // 2+ classes found, so array value is returned
+ *   // $val: [ '\Bar\Foo', '\Foo', '\Baz\Foo' ]
+ * } else {
+ *   // string value is returned when only one class matches
+ *   // $val: '\Bar\Foo'
+ * }
+ * ~~~~~
+ * 
+ * #pw-group-class-helpers
+ * 
+ * @param string|object $className
+ * @param bool $withClass Include class name in returned namespace? (default=false)
+ * @param bool $strict Return array of namespaces if multiple match? (default=false)
+ * @return string|array Returns one of the following:
+ *  - String of `\Namespace\` (leading+trailing backslashes) if namespace found.
+ *  - String of `\` if class in root namespace.
+ *  - Blank string if unable to find namespace for class.
+ *  - Array of namespaces only if $strict option is true AND multiple namespaces were found for class.
+ *  - If the $withClass option is true, then return value(s) have class, i.e. `\Namespace\ClassName`.
+ * @since 3.0.150
+ * 
+ */
+function wireClassNamespace($className, $withClass = false, $strict = false) {
+	
+	$bs = "\\";
+	$ns = "";
+	
+	if(is_object($className)) {
+		$className = get_class($className);
+	}
+	
+	if(strpos($className, $bs) !== false) {
+		// namespace is already included in class name
+		$a = explode($bs, $className);
+		array_pop($a); // class
+		$ns = count($a) ? implode($bs, $a) : $bs;
+		if(empty($ns)) $ns = $bs;
+		$strict = false; // strict not necessary
+
+	} else if(class_exists(__NAMESPACE__ . "$bs$className")) {
+		// class in ProcessWire namespace
+		$ns = __NAMESPACE__;
+		
+	} else if(class_exists("$bs$className")) {
+		// class in root namespace
+		$ns = $bs;
+	}
+	
+	if(empty($ns) || $strict) {
+		// hunt down namespace from declared classes
+		$nsa = array();
+		$name = strtolower($className); 
+		foreach(get_declared_classes() as $class) {
+			if(strpos($class, $bs) === false) {
+				// root namespace
+				if(!$strict) continue;
+				$class = "$bs$class";
+			}
+			if(stripos($class, "$bs$className") === false) continue;
+			if(strtolower(substr($class, -1 * strlen($className))) !== $name) continue;
+			$a = explode($bs, trim($class, $bs));
+			$cn = array_pop($a);
+			$ns = count($a) ? implode($bs, $a) : $bs;
+			if($ns && $ns !== $bs) $ns = $bs . trim($ns, $bs) . $bs;
+			if($withClass) $ns .= $cn;
+			$nsa[] = $ns;
+			if(!$strict) break;
+		}
+		$n = count($nsa);
+		// return array now for multi-match strict mode
+		if($strict && $n > 1) return $nsa; 
+		$ns = $n ? reset($nsa) : '';
+		
+	} else if($ns && $ns !== $bs) {
+		// format with leading/trailing backslashes, i.e. \Namespace\
+		$ns = $bs . trim($ns, $bs) . $bs;
+		if($withClass) $ns .= $className;
+	}
+	
+	return $ns;
 }
 
 
@@ -950,9 +1050,14 @@ function wireClassParents($className, $autoload = true) {
 		$className = wireClassName($className, true);
 		if(!class_exists($className, false)) {
 			$_className = wireClassName($className, false);
-			if(class_exists("\\$_className")) $className = $_className;
+			if(class_exists("\\$_className")) {
+				$className = $_className;
+			} else {
+				$ns = wireClassNamespace($_className); 
+				if($ns) $className = $ns . $_className;
+			}
 		}
-		$parents = class_parents(ltrim($className, "\\"), $autoload);
+		$parents = @class_parents(ltrim($className, "\\"), $autoload);
 	}
 	$a = array();
 	if(is_array($parents)) foreach($parents as $k => $v) {
@@ -1081,12 +1186,54 @@ function wireCount($value) {
 }
 
 /**
+ * Returns string length of any type (string, array, object, bool, int, etc.)
+ * 
+ * - If given a string it returns the multibyte string length. 
+ * - If given a bool, returns 1 for true or 0 for false.
+ * - If given an int or float, returns its length when typecast to string.
+ * - If given array or object it duplicates the behavior of `wireCount()`. 
+ * - If given null returns 0.
+ * 
+ * @param string|array|object|int|bool|null $value
+ * @param bool $mb Use multibyte string length when available (default=true)
+ * @return int
+ * @since 3.0.192
+ * 
+ */
+function wireLength($value, $mb = true) {
+	if($value === null || $value === '' || $value === false) return 0; 
+	if($value === true) return 1;
+	if(is_string($value)) return ($mb && function_exists('mb_strlen') ? mb_strlen($value) : strlen($value));
+	if(is_array($value) || is_object($value)) return wireCount($value);
+	return strlen("$value"); // int, float, other: returns length of string typecast
+}
+
+/**
+ * Returns string byte length of any type (string, array, object, bool, int, etc.)
+ * 
+ * This is identical to the `wireLength()` function except that it does not use
+ * multibyte string lengths on strings, so it returns a byte length when given
+ * a multibyte string rather than a visual character length. So on strings
+ * it uses strlen() rather than mb_strlen(). 
+ *
+ * @param string|array|object|int|bool|null $value
+ * @return int
+ * @since 3.0.192
+ *
+ */
+function wireLen($value) {
+	return wireLength($value, false);
+}
+
+/**
  * Is the given value empty according to ProcessWire standards?
  * 
  * This works the same as PHP’s empty() function except for the following: 
  * 
  * - It returns true for Countable objects that have 0 items. 
  * - It considers whitespace-only strings to be empty.
+ * - It considers WireNull objects (like NullPage or any others) to be empty (3.0.149+).
+ * - It uses the string value of objects that can be typecast strings (3.0.150+).
  * - You cannot pass it an undefined variable without triggering a PHP warning. 
  * 
  * ~~~~~
@@ -1117,8 +1264,12 @@ function wireEmpty($value) {
 	if(empty($value)) return true;
 	if(is_object($value)) {
 		if($value instanceof \Countable && !count($value)) return true;
-	} else if(is_string($value)) {
-		if(!strlen(trim($value))) return true;
+		if($value instanceof WireNull) return true; // 3.0.149+
+		if(method_exists($value, '__toString')) $value = (string) $value;
+	}
+	if(is_string($value)) {
+		$value = trim($value);
+		if(empty($value)) return true;
 	}
 	return false;
 }

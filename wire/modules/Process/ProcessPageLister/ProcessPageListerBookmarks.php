@@ -312,8 +312,14 @@ class ProcessPageListerBookmarks extends Wire {
 				$f->label = $this->_x('What pages should this bookmark show?', 'bookmark-editor');
 				$selector = $bookmark['selector'];
 				if($bookmark['sort']) $selector .= ", sort=$bookmark[sort]";
-				if($this->lister->initSelector && strpos($selector, $this->lister->initSelector) !== false) {
-					$selector = str_replace($this->lister->initSelector, '', $selector); // ensure that $selector does not contain initSelector
+				if($this->lister->initSelector) { 
+					$initSelector = $this->lister->initSelector;
+					if(strpos($selector, $initSelector) === false) {
+						$initSelector = trim(preg_replace('![,\s]*\binclude=(all|unpublished|hidden)\b!i', '', $initSelector), ', ');
+					}
+					if(strpos($selector, $initSelector) !== false) {
+						$selector = str_replace($initSelector, '', $selector); // ensure that $selector does not contain initSelector
+					}
 				}
 				if($this->lister->template) $f->initTemplate = $this->lister->template;
 				$default = $this->lister->className() == 'ProcessPageLister';
@@ -483,9 +489,9 @@ class ProcessPageListerBookmarks extends Wire {
 	 */
 	protected function executeSaveBookmark() {
 
-		$input = $this->wire('input');
-		$sanitizer = $this->wire('sanitizer');
-		$languages = $this->wire('languages');
+		$input = $this->wire()->input;
+		$sanitizer = $this->wire()->sanitizer;
+		$languages = $this->wire()->languages;
 
 		$bookmarkID = $this->bookmarks->_bookmarkID($input->post('bookmark_id'));
 		$bookmarkTitle = $input->post->text('bookmark_title');
@@ -528,7 +534,7 @@ class ProcessPageListerBookmarks extends Wire {
 		$bookmarkSelector = str_replace(', , ', ', ', $bookmarkSelector);
 		$bookmarkSelector = trim($bookmarkSelector, ', ');
 
-		if($bookmarkID) {
+		if($bookmarkID && $this->user->isSuperuser()) {
 			$bookmarkColumns = $input->post('bookmark_columns');
 			foreach($bookmarkColumns as $cnt => $column) {
 				$column = $sanitizer->name($column);
@@ -539,6 +545,8 @@ class ProcessPageListerBookmarks extends Wire {
 				}
 			}
 			$bookmarkColumns = array_values($bookmarkColumns);
+		} else if($bookmarkID && $existingBookmark) {
+			$bookmarkColumns = $existingBookmark['columns'];
 		} else {
 			$bookmarkColumns = $this->lister->columns;
 		}

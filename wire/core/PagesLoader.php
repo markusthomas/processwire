@@ -5,7 +5,7 @@
  * 
  * Implements page finding/loading methods of the $pages API variable
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -65,6 +65,22 @@ class PagesLoader extends Wire {
 	protected $debug = false;
 
 	/**
+	 * Are we currenty loading pages?
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $loading = false;
+
+	/**
+	 * Page instance ID
+	 * 
+	 * @var int
+	 * 
+	 */
+	static protected $pageInstanceID = 0;
+
+	/**
 	 * Construct
 	 * 
 	 * @param Pages $pages
@@ -76,7 +92,7 @@ class PagesLoader extends Wire {
 	}
 	
 	/**
-	 * Set whether loaded pages have their outputFormatting turn on or off
+	 * Set whether loaded pages have their outputFormatting turned on or off
 	 *
 	 * By default, it is turned on.
 	 *
@@ -86,7 +102,13 @@ class PagesLoader extends Wire {
 	public function setOutputFormatting($outputFormatting = true) {
 		$this->outputFormatting = $outputFormatting ? true : false;
 	}
-	
+
+	/**
+	 * Get whether loaded pages have their outputFormatting turned on or off
+	 *
+	 * @return bool
+	 *
+	 */
 	public function getOutputFormatting() {
 		return $this->outputFormatting;
 	}
@@ -102,10 +124,122 @@ class PagesLoader extends Wire {
 	 */
 	public function setAutojoin($autojoin = true) {
 		$this->autojoin = $autojoin ? true : false;
-	}	
-	
+	}
+
+	/**
+	 * Get whether autojoin is enabled for page loading queries
+	 * 
+	 * @return bool
+	 * 
+	 */
 	public function getAutojoin() {
 		return $this->autojoin;
+	}
+
+	/**
+	 * Normalize a selector string 
+	 * 
+	 * @param string $selector
+	 * @param bool $convertIDs Normalize to integer ID or array of integer IDs when possible (default=true)
+	 * @return array|int|string
+	 * 
+	 */
+	protected function normalizeSelectorString($selector, $convertIDs = true) {
+		
+		$selector = trim($selector, ', ');
+
+		if(ctype_digit($selector)) {
+			// normalize to page ID (int)
+			$selector = (int) $selector;
+
+		} else if($selector === '/' || $selector === 'path=/') {
+			// normalize selectors that indicate homepage to just be ID 1
+			$selector = (int) $this->wire()->config->rootPageID;
+
+		} else if($selector[0] === '/') {
+			// if selector begins with a slash, it is referring to a path
+			$selector = "path=$selector";
+			
+		} else if(strpos($selector, ',') === false) {
+			// there is just one “key=value” or “value” selector that needs further processing
+			if(strpos($selector, 'id=')) {
+				if($convertIDs) {
+					// string like id=123 or id=123|456|789 converted to int or int-array
+					$s = substr($selector, 3); // skip over 'id='
+					if(ctype_digit($s)) {
+						// id=123
+						$selector = (int) $s;
+					} else if(strpos($selector, '|') && ctype_digit(str_replace('|', '', $s))) {
+						// id=123|456|789
+						$a = explode('|', $s);
+						foreach($a as $k => $v) $a[$k] = (int) $v;
+						$selector = $a;
+					}
+				}
+			} else if(!Selectors::stringHasOperator($selector)) {
+				// no operator indicates this is just referring to a page name
+				$sanitizer = $this->wire()->sanitizer;
+				if($sanitizer->pageNameUTF8($selector) === $selector) {
+					// sanitized value consistent with a page name
+					// optimize selector rather than determining value here
+					$selector = 'name=' . $sanitizer->selectorValue($selector);
+				}
+			}
+		}
+		
+		if(is_int($selector) || ctype_digit("$selector")) {
+			// page ID integer
+			if($convertIDs) {
+				$selector = (int) $selector;
+			} else {
+				$selector = "id=$selector";
+			}
+		}
+
+		return $selector;
+	}
+	
+	/**
+	 * Normalize a selector 
+	 * 
+	 * @param string|int|array $selector
+	 * @param bool $convertIDs Convert ID-only selectors to integers or arrays of integers?
+	 * @return array|int|string
+	 * 
+	 */
+	protected function normalizeSelector($selector, $convertIDs = true) {
+		
+		if(empty($selector)) return '';
+	
+		if(is_int($selector)) {
+			if(!$convertIDs) $selector = "id=$selector"; 
+		} else if(is_string($selector)) {
+			$selector = $this->normalizeSelectorString($selector, $convertIDs);
+		} else if(is_array($selector)) {
+			// array that is not associative, not selector array, and consists of only numbers
+			if($this->isIdArray($selector)) {
+				if(!$convertIDs) $selector = 'id=' . implode('|', $selector);
+			}
+		}
+
+		return $selector;
+	}
+
+	/**
+	 * Is this an array of IDs? Also sanitizes to all integers when true
+	 * 
+	 * @param array $a
+	 * @return bool
+	 * 
+	 */
+	protected function isIdArray(array &$a) {
+		if(ctype_digit(implode('', array_keys($a))) && !is_array(reset($a)) && ctype_digit(implode('', $a))) {
+			// regular array of page IDs, we delegate that to getById() method, but with access/visibility control
+			foreach($a as $k => $v) $a[$k] = (int) $v;
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	/**
@@ -117,64 +251,25 @@ class PagesLoader extends Wire {
 	 * @return bool|Page|PageArray Returns boolean false when no shortcut available
 	 * 
 	 */
-	protected function findShortcut(&$selector, $options, $loadOptions) {
+	protected function findShortcut($selector, $options, $loadOptions) {
 		
-		if(empty($selector)) return $this->pages->newPageArray($loadOptions);
-		if(!empty($options['lazy'])) return false;
+		if(empty($selector)) {
+			return $this->pages->newPageArray($loadOptions);
+		}
 		
 		$value = false;
 		$filter = empty($options['findAll']);
+		$selector = $this->normalizeSelector($selector, true); 
 	
-		if(is_string($selector)) {
-			$selector = trim($selector, ', ');
-			if(ctype_digit($selector)) {
-				// normalize to page ID (int)
-				$selector = (int) $selector;
-			} else if($selector === '/' || $selector === 'path=/') {
-				// normalize selectors that indicate homepage to just be ID 1
-				$selector = (int) $this->wire('config')->rootPageID;
-			} else if($selector[0] == '/') {
-				// if selector begins with a slash, it is referring to a path
-				$selector = "path=$selector";
-			}
-		}
-
 		if(is_array($selector)) {
-			// array that is .... not associative .................. not selector array ........ consists of only numbers
-			if(ctype_digit(implode('', array_keys($selector))) && !is_array(reset($selector)) && ctype_digit(implode('', $selector))) {
-				// regular array of page IDs, we delegate that to getById() method, but with access/visibility control
-				foreach($selector as $k => $v) $selector[$k] = (int) $v;
+			if($this->isIdArray($selector)) {
 				$value = $this->getById($selector, $loadOptions);
 				$filter = true;
-			}
-
+			}	
+				
 		} else if(is_int($selector)) {
 			// page ID integer
 			$value = $this->getById(array($selector), $loadOptions);
-			
-		} else if(is_string($selector) && strpos($selector, ',') === false) {
-			// there is just one “key=value” or “value” selector
-			if(strpos($selector, 'id=') === 0) {
-				// string like id=123 or id=123|456|789
-				$s = substr($selector, 3); // skip over 'id='
-				if(ctype_digit($s)) {
-					// id=123
-					$value = $this->getById((int) $s, $loadOptions);
-				} else if(strpos($selector, '|') && ctype_digit(str_replace('|', '', $s))) {
-					// id=123|456|789
-					$a = explode('|', $s);
-					foreach($a as $k => $v) $a[$k] = (int) $v;
-					$value = $this->getById($a, $loadOptions);
-				}
-			} else if(!Selectors::stringHasOperator($selector)) {
-				// no operator indicates this is just referring to a page name
-				$sanitizer = $this->wire('sanitizer');
-				if($sanitizer->pageNameUTF8($selector) === $selector) {
-					// sanitized value consistent with a page name
-					// optimize selector rather than determining value here
-					$selector = 'name=' . $sanitizer->selectorValue($selector);
-				}
-			}
 		}
 	
 		if($value) {
@@ -198,23 +293,29 @@ class PagesLoader extends Wire {
 	 *
 	 * @param string|int|array|Selectors $selector Specify selector (standard usage), but can also accept page ID or array of page IDs.
 	 * @param array|string $options Optional one or more options that can modify certain behaviors. May be assoc array or key=value string.
-	 *	- findOne: boolean - apply optimizations for finding a single page
-	 *  - findAll: boolean - find all pages with no exclusions (same as include=all option)
-	 *  - findIDs: boolean|int - true=return array of [id, template_id, parent_id], or 1=return just page IDs. 
-	 *	- getTotal: boolean - whether to set returning PageArray's "total" property (default: true except when findOne=true)
-	 *  - cache: boolean - Allow caching of selectors and pages loaded (default=true). Also sets loadOptions[cache]. 
-	 *  - allowCustom: boolean - Whether to allow use of "_custom=new selector" in selectors (default=false). 
-	 *  - lazy: boolean - makes find() return Page objects that don't have any data populated to them (other than id and template). 
-	 *	- loadPages: boolean - whether to populate the returned PageArray with found pages (default: true).
-	 *		The only reason why you'd want to change this to false would be if you only needed the count details from
-	 *		the PageArray: getTotal(), getStart(), getLimit, etc. This is intended as an optimization for Pages::count().
-	 * 		Does not apply if $selectorString argument is an array.
-	 *  - caller: string - optional name of calling function, for debugging purposes, i.e. pages.count
-	 * 	- include: string - Optional inclusion mode of 'hidden', 'unpublished' or 'all'. Default=none. Typically you would specify this
-	 * 		directly in the selector string, so the option is mainly useful if your first argument is not a string.
+	 *	- `findOne` (bool): Apply optimizations for finding a single page.
+	 *  - `findAll` (bool): Find all pages with no exclusions (same as include=all option).
+	 *  - `findIDs` (bool|int): Makes method return raw array rather than PageArray, specify one of the following:
+	 *      • `true` (bool): return array of [ [id, templates_id, parent_id] ] for each page.
+	 *      • `1` (int): Return just array of just page IDs, [id, id, id]
+	 *      • `2` (int): Return all pages table columns in associative array for each page (3.0.153+).
+	 *      • `3` (int): Same as 2 + dates are unix timestamps + has 'pageArray' key w/blank PageArray for pagination info (3.0.172+).
+	 *      • `4` (int): Same as 3 + return PageArray instead if one is available in cache (3.0.172+).
+	 *	- `getTotal` (bool): Whether to set returning PageArray's "total" property (default: true except when findOne=true)
+	 *  - `cache` (bool): Allow caching of selectors and pages loaded (default=true). Also sets loadOptions[cache]. 
+	 *  - `allowCustom` (bool): Whether to allow use of "_custom=new selector" in selectors (default=false). 
+	 *  - `lazy` (bool): Makes find() return Page objects that don't have any data populated to them (other than id and template). 
+	 *	- `loadPages` (bool): Whether to populate the returned PageArray with found pages (default: true).
+	 *	   The only reason why you'd want to change this to false would be if you only needed the count details from
+	 *	   the PageArray: getTotal(), getStart(), getLimit, etc. This is intended as an optimization for Pages::count().
+	 * 	   Does not apply if $selectorString argument is an array.
+	 *  - `caller` (string): Name of calling function, for debugging purposes, i.e. pages.count
+	 * 	- `include` (string): Inclusion mode of 'hidden', 'unpublished' or 'all'. Default=none. Typically you would specify this
+	 * 	   directly in the selector string, so the option is mainly useful if your first argument is not a string.
 	 *  - `stopBeforeID` (int): Stop loading pages once page matching this ID is found (default=0).
 	 *  - `startAfterID` (int): Start loading pages once page matching this ID is found (default=0).
-	 * 	- loadOptions: array - Optional assoc array of options to pass to getById() load options.
+	 * 	- `loadOptions` (array): Assoc array of options to pass to getById() load options. (does not apply when 'findIds' > 3). 
+	 *  - `joinFields` (array): Names of fields to autojoin, or empty array to join none; overrides field autojoin settings (default=null) 3.0.172+
 	 * @return PageArray|array
 	 *
 	 */
@@ -228,10 +329,18 @@ class PagesLoader extends Wire {
 		$lazy = empty($options['lazy']) ? false : true;
 		$findIDs = isset($options['findIDs']) ? $options['findIDs'] : false;
 		$debug = $this->debug && !$lazy;
-		$cachePages = isset($options['cache']) ? (bool) $options['cache'] : true;
-		if(!$cachePages && !isset($loadOptions['cache'])) $loadOptions['cache'] = false;
+		$allowShortcuts = $loadPages && !$lazy && (!$findIDs || $findIDs === 4); 
+		$joinFields = isset($options['joinFields']) ? $options['joinFields'] : array();
+		$cachePages = isset($options['cache']) ? $options['cache'] : true;
 		
-		if($loadPages && !$lazy && !$findIDs) {
+		if($cachePages) {
+			$options['cache'] = $cachePages;
+			$loadOptions['cache'] = $cachePages;
+		} else if(!isset($loadOptions['cache'])) {
+			$loadOptions['cache'] = false;
+		}
+		
+		if($allowShortcuts) {
 			$pages = $this->findShortcut($selector, $options, $loadOptions);
 			if($pages) return $pages;
 		}
@@ -239,6 +348,7 @@ class PagesLoader extends Wire {
 		if($selector instanceof Selectors) {
 			$selectors = $selector;
 		} else {
+			$selector = $this->normalizeSelector($selector, false); 
 			$selectors = $this->wire(new Selectors());
 			$selectors->init($selector);
 		}
@@ -248,11 +358,29 @@ class PagesLoader extends Wire {
 		}
 
 		$selectorString = is_string($selector) ? $selector : (string) $selectors;
+
+		// check whether the joinFields option will be used
+		if(!$lazy && !$findIDs) {
+			$fields = $this->wire()->fields;
+			// support the joinFields option when selector contains 'field=a|b|c' or 'join=a|b|c'
+			foreach(array('field', 'join') as $name) {
+				if(strpos($selectorString, "$name=") === false || $fields->get($name)) continue; 
+				foreach($selectors as $selector) {
+					if($selector->field() !== $name) continue;
+					$joinFields = array_merge($joinFields, $selector->values());
+					$selectors->remove($selector);
+				}
+			}
+			if(count($joinFields)) {
+				unset($options['include']); // because it was moved into $selectors earlier
+				return $this->findMin($selectors, array_merge($options, array('joinFields' => $joinFields)));
+			}
+		} 
 		
 		// see if this has been cached and return it if so
-		if($loadPages && !$findIDs && !$lazy) {
+		if($allowShortcuts) {
 			$pages = $this->pages->cacher()->getSelectorCache($selectorString, $options);
-			if(!is_null($pages)) {
+			if($pages !== null) {
 				if($debug) $this->pages->debugLog('find', $selectorString, $pages . ' [from-cache]');
 				return $pages;
 			}
@@ -267,10 +395,29 @@ class PagesLoader extends Wire {
 		$profilerEvent = $profiler ? $profiler->start("$caller($selectorString)", "Pages") : null;
 		
 		if(($lazy || $findIDs) && strpos($selectorString, 'limit=') === false) $options['getTotal'] = false;
-		
-		if($lazy || $findIDs === 1) {
+	
+		if($lazy) {
+			// [ pageID => templateID ]
+			$pagesIDs = $pageFinder->findTemplateIDs($selectors, $options); 
+			
+		} else if($findIDs === 1) {
+			// [ pageID ]
 			$pagesIDs = $pageFinder->findIDs($selectors, $options);
+			
+		} else if($findIDs === 2) {
+			// [ pageID => [ all pages columns ] ]
+			$pagesInfo = $pageFinder->findVerboseIDs($selectors, $options);
+			
+		} else if($findIDs === 3 || $findIDs === 4) {
+			// [ pageID => [ all pages columns + sortfield + dates as unix timestamps ],
+			// 'pageArray' => PageArray(blank but with pagination info populated) ] ]
+			$options['joinSortfield'] = true;
+			$options['getNumChildren'] = true;
+			$options['unixTimestamps'] = true;
+			$pagesInfo = $pageFinder->findVerboseIDs($selectors, $options);
+			
 		} else {
+			// [ [ 'id' => 3, 'templates_id' => 2, 'parent_id' => 1, 'score' => 1.123 ]
 			$pagesInfo = $pageFinder->find($selectors, $options);
 		}
 		
@@ -286,41 +433,58 @@ class PagesLoader extends Wire {
 		
 		if($lazy) {
 			// lazy load: create empty pages containing only id and template
+			$templates = $this->wire()->templates;
 			$pages = $this->pages->newPageArray($loadOptions);
 			$pages->finderOptions($options);
 			$pages->setDuplicateChecking(false);
 			$loadPages = false;
 			$cachePages = false;
 			$template = null;
+			$templatesByID = array();
+			$loading = $this->loading;
 
-			foreach($pagesIDs as $id) {
-				$page = $this->pages->newPage();
+			if(!$loading) $this->loading = true;
+			foreach($pagesIDs as $id => $templateID) {
+				if(isset($templatesByID[$templateID])) {
+					$template = $templatesByID[$templateID];
+				} else {
+					$template = $templates->get($templateID);
+					$templatesByID[$templateID] = $template;
+				}
+				$page = $this->pages->newPage($template);
 				$page->_lazy($id);
 				$page->loaderCache = false;
 				$pages->add($page);
 			}
 
+			if(!$loading) $this->loading = false;
 			$pages->setDuplicateChecking(true);
 			if(count($pagesIDs)) $pages->_lazy(true);
+			unset($template, $templatesByID);
 
 		} else if($findIDs) {
 			
 			$loadPages = false;
 			$cachePages = false;
-			$pages = $this->pages->newPageArray($loadOptions); // only for hooks to see
+			// PageArray for hooks or for findIDs==3 option
+			$pages = $this->pages->newPageArray($loadOptions); 
 
 		} else if($loadPages) {
 			// parent_id is null unless a single parent was specified in the selectors
+			$templates = $this->wire()->templates;
 			$parent_id = $pageFinder->getParentID();
 			$idsSorted = array();
 			$idsByTemplate = array();
+			$scores = array();
 
 			// organize the pages by template ID
 			foreach($pagesInfo as $page) {
-				$tpl_id = $page['templates_id'];
+				$tpl_id = (int) $page['templates_id'];
+				$id = (int) $page['id'];
 				if(!isset($idsByTemplate[$tpl_id])) $idsByTemplate[$tpl_id] = array();
-				$idsByTemplate[$tpl_id][] = $page['id'];
-				$idsSorted[] = $page['id'];
+				$idsByTemplate[$tpl_id][] = $id;
+				$idsSorted[] = $id;
+				if(!empty($page['score'])) $scores[$id] = (float) $page['score'];
 			}
 
 			if(count($idsByTemplate) > 1) {
@@ -329,7 +493,7 @@ class PagesLoader extends Wire {
 				$unsortedPages = $this->pages->newPageArray($loadOptions);
 				foreach($idsByTemplate as $tpl_id => $ids) {
 					$opt = $loadOptions;
-					$opt['template'] = $this->wire('templates')->get($tpl_id);
+					$opt['template'] = $templates->get($tpl_id);
 					$opt['parent_id'] = $parent_id;
 					$unsortedPages->import($this->getById($ids, $opt));
 				}
@@ -349,13 +513,20 @@ class PagesLoader extends Wire {
 				$pages = $this->pages->newPageArray($loadOptions);
 				reset($idsByTemplate);
 				$opt = $loadOptions;
-				$opt['template'] = $this->wire('templates')->get(key($idsByTemplate));
+				$opt['template'] = $templates->get(key($idsByTemplate));
 				$opt['parent_id'] = $parent_id;
 				$pages->import($this->getById($idsSorted, $opt));
 			}
 			
 			$sortsAfter = $pageFinder->getSortsAfter();
 			if(count($sortsAfter)) $pages->sort($sortsAfter);
+			
+			if(count($scores)) {
+				foreach($pages as $page) {
+					$score = isset($scores[$page->id]) ? $scores[$page->id] : 0; 
+					$page->setQuietly('_pfscore', $score); 
+				}
+			}
 
 		} else {
 			$pages = $this->pages->newPageArray($loadOptions);
@@ -402,11 +573,170 @@ class PagesLoader extends Wire {
 			'options' => $options
 		));
 		
-		if($findIDs) return $findIDs === 1 ? $pagesIDs : $pagesInfo;
+		if($findIDs) {
+			if($findIDs === 3 || $findIDs === 4) $pagesInfo['pageArray'] = $pages;
+			return $findIDs === 1 ? $pagesIDs : $pagesInfo;
+		}
 
 		return $pages;
 	}
+
+	/**
+	 * Minimal find for reduced or delayed overload in some circumstances
+	 * 
+	 * This combines the page finding and page loading operation into a single operation
+	 * and single query, unlike a regular find() which finds matching page IDs in one 
+	 * query and then loads them in a separate query. As a result this method does not
+	 * need to call the getByIds() method to load pages, as it is able to load them itself. 
+	 * 
+	 * This strategy may eventually replace the “find() + getByIds()” strategy, but for the
+	 * moment is only used when the `$pages->find()` method specifies `field=name` in 
+	 * the selector. In that selector, `name` can be any field name, or group of them, i.e.
+	 * `title|date|summary`, or a non-existing field like `none` to specify that no fields 
+	 * should be autojoin (for fastest performance). 
+	 * 
+	 * Note that while this might reduce overhead in some cases, it can also increase the 
+	 * overall request time if you omit fields that are actually used on the resulting pages.
+	 * For instance, if the `title` field is an autojoin field (as it is by default), and 
+	 * we do a `$pages->find('template=blog-post, field=none');` and then render a list of
+	 * blog post titles, then we have just increased overhead because PW would have to 
+	 * perform a separate query to load each blog-post page’s title. On the other hand, if 
+	 * we render a list of blog post titles with date and summary, and the date and summary 
+	 * fields are not configured as autojoin fields, then we can specify all those that we 
+	 * use in our rendered list to greatly improve performance, like this: 
+	 * `$pages->find('template=blog-post, field=title|date|summary');`.
+	 * 
+	 * While this method combines what find() and getById() do in one query, there does not
+	 * appear to be any overhead benefit when the two strategies are dealing with identical
+	 * conditions, like the same autojoin fields. 
+	 * 
+	 * @param string|array|Selectors $selector
+	 * @param array $options
+	 *  - `cache` (bool): Allow pulling from and saving results to cache? (default=true)
+	 *  - `joinFields` (array): Names of fields to also join into the page load
+	 * @return PageArray
+	 * @throws WireException
+	 * @since 3.0.172
+	 * 
+	 */
+	public function findMin($selector, array $options = array()) {
+
+		$useCache = isset($options['cache']) ? $options['cache'] : true;
+		$templates = $this->wire()->templates;
+		$languages = $this->wire()->languages;
+		$languageIds = array();
+		$templatesById = array();
+		
+		if($languages) foreach($languages as $language) $languageIds[$language->id] = $language->id;
+		
+		$options['findIDs'] = $useCache ? 4 : 3;
+		$joinFields = isset($options['joinFields']) ? $options['joinFields'] : array();
+		$rows = $this->find($selector, $options);
+		
+		// if PageArray was already available in cache, return it now
+		if($rows instanceof PageArray) return $rows;
 	
+		/** @var PageArray $pageArray */
+		$pageArray = $rows['pageArray'];
+		$pageArray->setTrackChanges(false);
+		$paginationTotal = $pageArray->getTotal();
+	
+		/** @var array $joinResults PageFinder sets which fields supported autojoin true|false */
+		$joinResults = $pageArray->data('joinFields');
+		
+		unset($rows['pageArray']);
+
+		foreach($rows as $row) {
+			
+			$page = $useCache ? $this->pages->getCache($row['id']) : null;
+			$tid = (int) $row['templates_id'];
+			
+			if($page) {
+				$pageArray->add($page);
+				continue;
+			}
+		
+			if(isset($templatesById[$tid])) {
+				$template = $templatesById[$tid]; 
+			} else {
+				$template = $templates->get($tid);
+				if(!$template) continue;
+				$templatesById[$tid] = $template;
+			}
+			
+			$sortfield = $template->sortfield;
+			if(empty($sortfield) && isset($row['sortfield'])) $sortfield = $row['sortfield'];
+			
+			$set = array(
+				'pageClass' => $template->getPageClass(),
+				'isLoaded' => false,
+				'id' => $row['id'],
+				'template' => $template,
+				'parent_id' => $row['parent_id'],
+				'sortfield' => $sortfield,
+			);
+		
+			unset($row['templates_id'], $row['parent_id'], $row['id'], $row['sortfield']);
+			
+			$page = $this->pages->newPage($set);
+			$page->instanceID = ++self::$pageInstanceID;
+			
+			if($languages) {
+				foreach($languageIds as $id) {
+					$key = "name$id";
+					if(isset($row[$key]) && strpos($row[$key], 'xn-') === 0) {
+						$page->setName($row[$key], $key);
+						unset($row[$key]);
+					}
+				}
+			}
+
+			foreach($row as $key => $value) {
+				if(strpos($key, '__')) {
+					if($value === null) {
+						$row[$key] = 'null'; // ensure detected by later isset in foreach($joinFields)
+					} else {
+						$page->setFieldValue($key, $value, false);
+					}
+				} else {
+					$page->setForced($key, $value);
+				}
+			}
+
+			// set blank values where joinField didn't appear on page row 
+			foreach($joinFields as $joinField) {
+				if(isset($row["{$joinField}__data"])) continue;
+				if(empty($joinResults[$joinField])) continue; // field did not support autojoin
+				if(!$template->fieldgroup->hasField($joinField)) continue;
+				$field = $page->getField($joinField);
+				if(!$field || !$field->type) continue;
+				$blankValue = $field->type->getBlankValue($page, $field);
+				$page->setFieldValue($field->name, $blankValue, false);
+			}
+
+			$page->setIsLoaded(true);
+			$page->setIsNew(false);
+			$page->resetTrackChanges(true);
+			$page->setOutputFormatting($this->outputFormatting);
+			$this->totalPagesLoaded++;
+
+			$pageArray->add($page);
+			
+			if($useCache) $this->pages->cache($page);
+		}
+
+		$pageArray->setTotal($paginationTotal);
+		$pageArray->resetTrackChanges(true);
+		
+		if($useCache) {
+			$selectorString = $pageArray->getSelectors(true);
+			$this->pages->cacher()->selectorCache($selectorString, $options, $pageArray);
+		}
+
+		return $pageArray;
+	}
+
+
 	/**
 	 * Like find() but returns only the first match as a Page object (not PageArray)
 	 *
@@ -445,13 +775,21 @@ class PagesLoader extends Wire {
 		if($page && !$page->viewable(false)) {
 			// page found but is not viewable, check if include mode was specified and would allow the page
 			$selectors = $items->getSelectors();
-			$include = $selectors ? $selectors->getSelectorByField('include') : null;
+			if($selectors) {
+				$include = $selectors->getSelectorByField('include');
+				$checkAccess = $selectors->getSelectorByField('check_access');
+				if(!$checkAccess) $checkAccess = $selectors->getSelectorByField('checkAccess');
+				$checkAccess = $checkAccess ? (bool) $checkAccess->value() : true;
+			} else {
+				$include = null;
+				$checkAccess = true;
+			}
 			if(!$include) {
 				// there was no “include=” selector present
-				$page = null;
+				if($checkAccess === true) $page = null;
 			} else if($include->value() === 'all') {
 				// allow $page to pass through with include=all mode
-			} else if($include->value() === 'unpublished' && $page->hasStatus(Page::statusUnpublished)) {
+			} else if($include->value() === 'unpublished' && $page->hasStatus(Page::statusUnpublished) && $checkAccess) {
 				// check if user would have access without unpublished status
 				$status = $page->status;
 				$page->setQuietly('status', $status & ~Page::statusUnpublished);
@@ -459,13 +797,13 @@ class PagesLoader extends Wire {
 				$page->setQuietly('status', $status); // restore
 				if(!$viewable) $page = null;
 			} else {
-				$page = null;
+				if($checkAccess === true) $page = null;
 			}
 		}
 
 		return $page && $page->id ? $page : $this->pages->newNullPage();
 	}
-
+	
 	/**
 	 * Returns the first page matching the given selector with no exclusions
 	 *
@@ -475,21 +813,88 @@ class PagesLoader extends Wire {
 	 *
 	 */
 	public function get($selector, $options = array()) {
+		
 		if(empty($selector)) return $this->pages->newNullPage();
-		if(is_string($selector) || is_int($selector)) {
-			$page = $this->pages->getCache($selector);
-			if($page) return $page;
+		
+		if(is_int($selector)) {
+			$getCache = true;
+		} else if(is_string($selector) && (ctype_digit($selector) || strpos($selector, 'id=') === 0)) {
+			$getCache = true;
+		} else {
+			$getCache = false;
 		}
+		
+		if($getCache) {
+			// if cache is possible, allow user-specified options to dictate whether cache is allowed
+			if(isset($options['loadOptions']) && isset($options['loadOptions']['getFromCache'])) {
+				$getCache = (bool) $options['loadOptions']['getFromCache'];
+			}
+			if($getCache) {
+				$page = $this->pages->getCache($selector); // selector is either 123 or id=123
+				if($page) return $page;
+			}
+		}
+		
 		$defaults = array(
 			'findOne' => true, // find only one page
 			'findAll' => true, // no exclusions
 			'getTotal' => false, // don't count totals
 			'caller' => 'pages.get'
 		);
+		
 		$options = count($options) ? array_merge($defaults, $options) : $defaults;
 		$page = $this->pages->find($selector, $options)->first();
 		if(!$page) $page = $this->pages->newNullPage();
+		
 		return $page;
+	}
+
+	/**
+	 * Is there any page that matches the given $selector in the system? (with no exclusions)
+	 *
+	 * - This can be used as an “exists” or “getID” type of method.
+	 * - Returns ID of first matching page if any exist, or 0 if none exist (returns array if `$verbose` is true).
+	 * - Like with the `get()` method, no pages are excluded, so an `include=all` is not necessary in selector.
+	 * - If you need to quickly check if something exists, this method is preferable to using a count() or get().
+	 *
+	 * When `$verbose` option is used, an array is returned instead. Verbose return array includes all columns
+	 * from the matching row in the pages table. 
+	 * 
+	 * @param string|int|array|Selectors $selector
+	 * @param bool $verbose Return verbose array with all pages columns rather than just page id? (default=false)
+	 * @param array $options Additional options to pass in find() $options argument (not currently applicable)
+	 * @return array|int
+	 * @since 3.0.153
+	 * 
+	 */
+	public function has($selector, $verbose = false, array $options = array()) {
+	
+		$defaults = array(
+			'findOne' => true, // find only one page
+			'findAll' => true, // no exclusions
+			'findIDs' => $verbose ? 2 : 1, // 2=all cols, 1=IDs only
+			'getTotal' => false, // don't count totals
+			'caller' => 'pages.has',
+		);
+
+		$options = count($options) ? array_merge($defaults, $options) : $defaults;
+		if(empty($selector)) return $verbose ? array() : 0;
+
+		if((is_string($selector) || is_int($selector)) && !$verbose) {
+			// see if any matching page is already in the cache
+			$page = $this->pages->getCache($selector);
+			if($page) return $page->id;
+		}
+		
+		$items = $this->pages->find($selector, $options);
+		
+		if($verbose) {
+			$value = count($items) ? reset($items) : array();
+		} else {
+			$value = count($items) ? (int) reset($items) : 0;
+		}
+		
+		return $value; 
 	}
 	
 	/**
@@ -524,8 +929,9 @@ class PagesLoader extends Wire {
 	 * - Note that if you specify false for 'findTemplates' the pageClass is assumed to be 'Page' unless you specify something different for the 'pageClass' option.
 	 *
 	 * @param array|WireArray|string|int $_ids Array of page IDs, comma or pipe-separated string of IDs, or single page ID (string or int)
-	 * @param Template|array|null $template Specify a template to make the load faster, because it won't have to attempt to join all possible fields... just those used by the template.
-	 *	Optionally specify an $options array instead, see the method notes above.
+	 *  or in 3.0.156+ array of associative arrays where each in format: [ 'id' => 123, 'templates_id' => 456 ]
+	 * @param Template|array|string|int|null $template Specify a template to make the load faster, because it won't have to attempt to join all possible fields... 
+	 *  just those used by the template. Optionally specify an $options array instead, see the method notes above.
 	 * @param int|null $parent_id Specify a parent to make the load faster, as it reduces the possibility for full table scans.
 	 *	This argument is ignored when an options array is supplied for the $template.
 	 * @return PageArray|Page Returns Page only if the 'getOne' option is specified, otherwise always returns a PageArray.
@@ -533,8 +939,6 @@ class PagesLoader extends Wire {
 	 *
 	 */
 	public function getById($_ids, $template = null, $parent_id = null) {
-
-		static $instanceID = 0;
 
 		$options = array(
 			'cache' => true,
@@ -553,12 +957,18 @@ class PagesLoader extends Wire {
 			'pageArrayClass' => 'PageArray',
 			'caller' => '', 
 		);
+	
+		$templates = $this->wire()->templates;
+		$database = $this->wire()->database;
+		$idsByTemplate = array();
+		$loading = $this->loading;
 
 		if(is_array($template)) {
 			// $template property specifies an array of options
 			$options = array_merge($options, $template);
 			$template = $options['template'];
 			$parent_id = $options['parent_id'];
+			if("$options[cache]" === "1") $options['cache'] = true;
 		} else if(!is_null($template) && !$template instanceof Template) {
 			throw new WireException('getById argument 2 must be Template or $options array');
 		}
@@ -570,7 +980,7 @@ class PagesLoader extends Wire {
 
 		if(!is_null($template) && !is_object($template)) {
 			// convert template string or id to Template object
-			$template = $this->wire('templates')->get($template);
+			$template = $templates->get($template);
 		}
 
 		if(is_string($_ids)) {
@@ -601,11 +1011,21 @@ class PagesLoader extends Wire {
 
 		// sanitize ids and determine which pages we can pull from cache
 		foreach($_ids as $key => $id) {
-
+			
 			if(!is_int($id)) {
-				$id = trim($id);
-				if(!ctype_digit($id)) continue;
-				$id = (int) $id;
+				if(is_array($id)) {
+					if(!isset($id['id'])) continue;
+					$tid = isset($id['templates_id']) ? (int) $id['templates_id'] : 0;
+					$id = (int) $id['id'];
+					if($tid) {
+						if(!isset($idsByTemplate[$tid])) $idsByTemplate[$tid] = array();
+						$idsByTemplate[$tid][] = $id;
+					}
+				} else {
+					$id = trim($id);
+					if(!ctype_digit($id)) continue;
+					$id = (int) $id;
+				}
 			}
 			
 			if($id < 1) continue;
@@ -646,7 +1066,10 @@ class PagesLoader extends Wire {
 		$idCnt = count($ids); // idCnt contains quantity of remaining page ids to load
 		if(!$idCnt) {
 			// if there are no more pages left to load, we can return what we've got
-			if($options['getOne']) return count($loaded) ? reset($loaded) : $this->pages->newNullPage();
+			if($options['getOne']) {
+				$page = count($loaded) ? reset($loaded) : null;
+				return $page instanceof Page ? $page : $this->pages->newNullPage();
+			}
 			$pages = $this->pages->newPageArray($options);
 			$pages->setDuplicateChecking(false);
 			$pages->import($loaded);
@@ -654,23 +1077,25 @@ class PagesLoader extends Wire {
 			return $pages;
 		}
 
-		$database = $this->wire('database');
-		$idsByTemplate = array();
+		if(!$loading) $this->loading = true;
 
-		if(is_null($template) && $options['findTemplates']) {
+		if(count($idsByTemplate)) {
+			// ok
+		} else if($template === null && $options['findTemplates']) {
 
 			// template was not defined with the function call, so we determine
 			// which templates are used by each of the pages we have to load
 
-			$sql = "SELECT id, templates_id FROM pages WHERE ";
-
+			$sql = 'SELECT id, templates_id FROM pages';
 			if($idCnt == 1) {
-				$sql .= "id=" . (int) reset($ids);
+				$query = $database->prepare("$sql WHERE id=:id");
+				$query->bindValue(':id', (int) reset($ids), \PDO::PARAM_INT); 
 			} else {
-				$sql .= "id IN(" . implode(",", $ids) . ")";
+				$ids = array_map('intval', $ids);
+				$sql = "$sql WHERE id IN(" . implode(',', $ids) . ")";
+				$query = $database->prepare($sql);
 			}
 
-			$query = $database->prepare($sql);
 			$result = $database->execute($query);
 			if($result) {
 				/** @noinspection PhpAssignmentInConditionInspection */
@@ -684,7 +1109,7 @@ class PagesLoader extends Wire {
 			}
 			$query->closeCursor();
 
-		} else if(is_null($template)) {
+		} else if($template === null) {
 			// no template provided, and autojoin not needed (so we don't need to know template)
 			$idsByTemplate = array(0 => $ids);
 
@@ -696,29 +1121,32 @@ class PagesLoader extends Wire {
 		foreach($idsByTemplate as $templates_id => $ids) {
 
 			if($templates_id && (!$template || $template->id != $templates_id)) {
-				$template = $this->wire('templates')->get($templates_id);
+				$template = $templates->get($templates_id);
 			}
 
 			if($template) {
 				$fields = $template->fieldgroup;
 			} else {
-				$fields = $this->wire('fields');
+				$fields = $this->wire()->fields;
 			}
 
 			/** @var DatabaseQuerySelect $query */
 			$query = $this->wire(new DatabaseQuerySelect());
 			$sortfield = $template ? $template->sortfield : '';
 			$joinSortfield = empty($sortfield) && $options['joinSortfield'];
+			
+			// note that "false AS isLoaded" triggers the setIsLoaded() function in Page intentionally
+			$select = 'false AS isLoaded, pages.templates_id AS templates_id, pages.*, ';
+			if($joinSortfield) {
+				$select .= 'pages_sortfields.sortfield, ';
+			}
+			if($options['getNumChildren']) {
+				$select .= "\n(SELECT COUNT(*) FROM pages AS children WHERE children.parent_id=pages.id) AS numChildren";
+			}
 
-			$query->select(
-				// note that "false AS isLoaded" triggers the setIsLoaded() function in Page intentionally
-				"false AS isLoaded, pages.templates_id AS templates_id, pages.*, " .
-				($joinSortfield ? 'pages_sortfields.sortfield, ' : '') .
-				($options['getNumChildren'] ? '(SELECT COUNT(*) FROM pages AS children WHERE children.parent_id=pages.id) AS numChildren' : '')
-			);
-
+			$query->select(rtrim($select, ', '));
+			$query->from('pages');
 			if($joinSortfield) $query->leftjoin('pages_sortfields ON pages_sortfields.pages_id=pages.id');
-			$query->groupby('pages.id');
 
 			if($options['autojoin'] && $this->autojoin) {
 				foreach($fields as $field) {
@@ -737,36 +1165,33 @@ class PagesLoader extends Wire {
 					$query->leftjoin("$table ON $table.pages_id=pages.id"); // QA
 				}
 			}
+			
+			if(count($ids) > 1) {
+				$ids = array_map('intval', $ids);
+				$query->where('pages.id IN(' . implode(',', $ids) . ')');
+			} else {
+				$id = reset($ids);
+				$query->where('pages.id=:id');
+				$query->bindValue(':id', (int) $id, \PDO::PARAM_INT);
+			}
 
-			if(!is_null($parent_id)) $query->where("pages.parent_id=" . (int) $parent_id);
-			if($template) $query->where("pages.templates_id=" . ((int) $template->id)); // QA
+			if(!is_null($parent_id)) {
+				$query->where('pages.parent_id=:parent_id');
+				$query->bindValue(':parent_id', (int) $parent_id, \PDO::PARAM_INT);
+			}
+			
+			if($template) {
+				$query->where('pages.templates_id=:templates_id');
+				$query->bindValue(':templates_id', (int) $template->id, \PDO::PARAM_INT);
+			}
 
-			$query->where("pages.id IN(" . implode(',', $ids) . ") "); // QA
-			$query->from("pages");
-
+			$query->groupby('pages.id');
 			$stmt = $query->prepare();
 			$database->execute($stmt);
 
 			$class = $options['pageClass'];
-			if(empty($class)) {
-				if($template) {
-					$class = ($template->pageClass && wireClassExists($template->pageClass)) ? $template->pageClass : 'Page';
-				} else {
-					$class = 'Page';
-				}
-			}
+			if(empty($class)) $class = $template ? $template->getPageClass() : __NAMESPACE__ . "\\Page";
 
-			$_class = wireClassName($class, true);
-			if($class != 'Page' && !wireClassExists($_class)) {
-				if(class_exists("\\$class")) {
-					$_class = "\\$class";
-				} else {
-					$this->error("Class '$class' for Pages::getById() does not exist", Notice::log);
-					$class = 'Page';
-					$_class = wireClassName($class, true);
-				}
-			}
-		
 			// page to populate, if provided in 'getOne' mode
 			/** @var Page|null $_page */
 			$_page = $options['getOne'] && $options['page'] && $options['page'] instanceof Page ? $options['page'] : null;
@@ -778,31 +1203,39 @@ class PagesLoader extends Wire {
 					if($_page) {
 						// populate provided Page object
 						$page = $_page;
-						$page->set('template', $template ? $template : $row['templates_id']);
+						$page->set('template', $template ? $template : (int) $row['templates_id']);
+						if(!$page->get('parent_id')) $page->set('parent_id', (int) $row['parent_id']); 
 					} else {
 						// create new Page object
+						$pageTemplate = $template ? $template : $templates->get((int) $row['templates_id']); 
+						$pageClass = empty($options['pageClass']) && $pageTemplate ? $pageTemplate->getPageClass() : $class; 
 						$page = $this->pages->newPage(array(
-							'pageClass' => $_class,
-							'template' => $template ? $template : $row['templates_id'],
+							'pageClass' => $pageClass,
+							'template' => $pageTemplate ? $pageTemplate : $row['templates_id'],
+							'parent' => $row['parent_id'], 
 						));
 					}
-					unset($row['templates_id']);
+					unset($row['templates_id'], $row['parent_id']);
+					$page->loaderCache = $options['cache'];
 					foreach($row as $key => $value) $page->set($key, $value);
-					if($options['cache'] === false) $page->loaderCache = false;
-					$page->instanceID = ++$instanceID;
+					$page->instanceID = ++self::$pageInstanceID;
 					$page->setIsLoaded(true);
 					$page->setIsNew(false);
 					$page->resetTrackChanges(true);
 					$page->setOutputFormatting($this->outputFormatting);
 					$loaded[$page->id] = $page;
-					if($options['cache']) $this->pages->cache($page);
+					if($options['cache'] === true) {
+						$this->pages->cache($page);
+					} else if($options['cache']) {
+						$this->pages->cacher()->cacheGroup($page, $options['cache']);
+					}
 					$this->totalPagesLoaded++;
 				}
 			} catch(\Exception $e) {
 				$error = $e->getMessage() . " [pageClass=$class, template=$template]";
 				$user = $this->wire('user');
 				if($user && $user->isSuperuser()) $this->error($error);
-				$this->wire('log')->error($error);
+				$this->wire()->log->error($error);
 				$this->trackException($e, false);
 			}
 
@@ -810,15 +1243,21 @@ class PagesLoader extends Wire {
 			$template = null;
 		}
 
-		if($options['getOne']) return count($loaded) ? reset($loaded) : $this->pages->newNullPage();
+		if($options['getOne']) {
+			if(!$loading) $this->loading = false;
+			$page = count($loaded) ? reset($loaded) : null;
+			return $page instanceof Page ? $page : $this->pages->newNullPage();
+		}
+		
 		$pages = $this->pages->newPageArray($options);
 		$pages->setDuplicateChecking(false);
 		$pages->import($loaded);
 		$pages->setDuplicateChecking(true);
+		if(!$loading) $this->loading = false;
 
 		// debug mode only
 		if($this->debug) {
-			$page = $this->wire('page');
+			$page = $this->wire()->page;
 			if($page && $page->template == 'admin') {
 				if(empty($options['caller'])) {
 					$_template = is_null($template) ? '' : ", $template";
@@ -835,8 +1274,124 @@ class PagesLoader extends Wire {
 				}
 			}
 		}
+		
 
 		return $pages;
+	}
+
+	/**
+	 * Find page(s) by name
+	 * 
+	 * This method is optimized just for finding pages by name and it does
+	 * not perform any filtering or access checking. 
+	 * 
+	 * @param string $name Match this page name
+	 * @param array $options
+	 *  - `parent' (int|Page): Match this parent ID (default=0)
+	 *  - `parentName` (string): Match this parent name (default='')
+	 *  - `getArray` (bool): Get PHP info array rather than Page|NullPage|PageArray? (default=false)
+	 *  - `getOne` (bool|int): Get just one match of Page or NullPage? (default=false)
+	 *     When true, if multiple pages match then NullPage will be returned. To instead return
+	 *     the first match, specify int `1` instead of boolean true.
+	 * @return array|NullPage|Page|PageArray
+	 * 
+	 */
+	public function findByName($name, array $options = array()) {
+		
+		$defaults = array(
+			'parent' => 0, 
+			'parentName' => '',
+			'getArray' => false,
+			'getOne' => false,
+		);
+		
+		$options = array_merge($defaults, $options);
+		$getArray = $options['getArray'];
+		$getOne = $options['getOne'];
+		
+		$blankRow = array(
+			'id' => 0,
+			'templates_id' => 0,
+			'parent_id' => 0,
+		);
+		
+		$joins = array();
+		
+		$selects = array(
+			'pages.id',
+			'pages.parent_id',
+			'pages.templates_id',
+		);
+		
+		$wheres = array(
+			'pages.name=:name',
+		);
+		
+		$binds = array(
+			'name' => $name,
+		);
+		
+		if($options['parent']) {
+			$wheres[] = 'pages.parent_id=:parentId';
+			$binds['parentId'] = (int) "$options[parent]";
+		}
+			
+		if($options['parentName']) {
+			$joins[] = 'JOIN pages AS parent ON pages.parent_id=parent.id AND parent.name=:parentName';
+			$binds['parentName'] = $options['parentName'];
+		}
+		
+		$sql = 
+			'SELECT ' . implode(', ', $selects) . ' ' . 
+			'FROM pages ' . implode(' ', $joins) . ' ' . 
+			'WHERE ' . implode(' AND ', $wheres) . ' ';
+		
+		if($getOne) $sql .= 'LIMIT 2';
+		
+		$query = $this->wire()->database->prepare($sql);
+		foreach($binds as $bindKey => $bindValue) {
+			$query->bindValue(":$bindKey", $bindValue);
+		}
+		
+		$query->execute();
+		$rowCount = (int) $query->rowCount();
+		$rows = array();
+		
+		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
+			$rows[] = $row;
+		}
+		
+		$query->closeCursor();
+		
+		if($getOne === 1 && $rowCount > 1) {
+			// multiple rows found but only first one requested
+			$rowCount = 1;
+		}
+	
+		if($rowCount === 0) {
+			// no rows matched
+			if($getOne) {
+				return $getArray ? $blankRow : $this->pages->newNullPage();
+			} else {
+				return $getArray ? array() : $this->pages->newPageArray();
+			}
+		} else if($rowCount === 1) {
+			// one row matched
+			if($getOne) {
+				return $getArray ? reset($rows) : $this->pages->getByIDs($rows, array('getOne' => true));
+			} else {
+				return $getArray ? $rows : $this->pages->getByIDs($rows);
+			}
+		} else {
+			// multiple rows matched
+			if($getOne) {
+				// return blank (multiple not allowed here)
+				return $getArray ? $blankRow : $this->pages->newNullPage();
+			} else {
+				// return all
+				return $getArray ? $rows : $this->pages->getByIDs($rows);
+			}
+		}
 	}
 
 	/**
@@ -883,11 +1438,12 @@ class PagesLoader extends Wire {
 		$id = (int) $id;
 		if(!$id || $id < 0) return '';
 
-		$languages = $this->wire('languages');
-		if($languages && !$this->wire('modules')->isInstalled('LanguageSupportPageNames')) $languages = null;
+		$languages = $this->wire()->languages;
+		if($languages && !$languages->hasPageNames()) $languages = null;
+		
 		$language = $options['language'];
 		$languageID = 0;
-		$homepageID = (int) $this->wire('config')->rootPageID;
+		$homepageID = (int) $this->wire()->config->rootPageID;
 
 		if(!empty($language) && $languages) {
 			if(is_string($language) || is_int($language)) $language = $languages->get($language);
@@ -902,7 +1458,7 @@ class PagesLoader extends Wire {
 			if($languageID) $languages->unsetLanguage();
 			return $path;
 
-		} else if($id == $homepageID && $languages && !$languageID) {
+		} else if($id === $homepageID && $languages && !$languageID) {
 			// default language in multi-language environment, let $page handle it since there is additional 
 			// hooked logic there provided by LanguageSupportPageNames
 			$page = $this->pages->get($homepageID);
@@ -959,13 +1515,13 @@ class PagesLoader extends Wire {
 		$path = trim($path, '/');
 
 		if($templatesID) {
-			$template = $this->wire('templates')->get($templatesID);
+			$template = $this->wire()->templates->get($templatesID);
 			if($template->slashUrls) $path .= '/';
 		}
 
 		return '/' . ltrim($path, '/');
 	}
-
+	
 	/**
 	 * Get a page by its path, similar to $pages->get('/path/to/page/') but with more options
 	 *
@@ -976,103 +1532,150 @@ class PagesLoader extends Wire {
 	 * 2) In a multi-language environment, you must specify the $useLanguages option to be true, if you
 	 *    want a result for a $path that is (or might be) a multi-language path. Otherwise, multi-language
 	 *    paths will make this method return a NullPage (or 0 if getID option is true).
-	 * 3) Partial paths may also match, so long as the partial path is completely unique in the site. 
-	 *    If you don't want that behavior, double check the path of the returned page. 
+	 * 3) Partial paths may also match, so long as the partial path is completely unique in the site.
+	 *    If you don't want that behavior, double check the path of the returned page.
+	 * 4) See also the newer/more capable `$pages->pathFinder()` methods `get('/path/')` and `getPage('/path/')`.
 	 *
-	 * @param $path
+	 * @param string $path
 	 * @param array|bool $options array of options (below), or specify boolean for $useLanguages option only.
-	 *  - getID: Specify true to just return the page ID (default=false)
-	 *  - useLanguages: Specify true to allow retrieval by language-specific paths (default=false)
-	 *  - useHistory: Allow use of previous paths used by the page, if PagePathHistory module is installed (default=false)
+	 *  - `getID` (bool): Specify true to just return the page ID (default=false)
+	 *  - `useLanguages` (bool): Specify true to allow retrieval by language-specific paths (default=false)
+	 *  - `useHistory` (bool): Allow use of previous paths used by the page, if PagePathHistory module is installed (default=false)
+	 *  - `allowUrl` (bool): Allow getting page by path OR url? Specify false to find only by path. This option only applies if
+	 *     the site happens to run from a subdirectory. (default=true) 3.0.184+
+	 *  - `allowPartial` (bool): Allow partial paths to match? (default=true) 3.0.184+
+	 *  - `allowUrlSegments` (bool): Allow paths with URL segments to match? When true and page match cannot be found, the closest
+	 *     parent page that allows URL segments will be returned. Found URL segments are populated to a `_urlSegments` array
+	 *     property on the returned page object. This also cancels the allowPartial setting. (default=false) 3.0.184+
 	 * @return Page|int
+	 * @see PagesPathFinder::get(), PagesPathFinder::getPage()
 	 *
 	 */
 	public function getByPath($path, $options = array()) {
+
+		$modules = $this->wire()->modules;
+		$sanitizer = $this->wire()->sanitizer;
+		$config = $this->wire()->config;
+		$database = $this->wire()->database;
 
 		$defaults = array(
 			'getID' => false,
 			'useLanguages' => false,
 			'useHistory' => false,
+			'allowUrl' => true,
+			'allowPartial' => true,
+			'allowUrlSegments' => false,
+			'_isRecursive' => false,
 		);
 
 		if(!is_array($options)) {
 			$defaults['useLanguages'] = (bool) $options;
 			$options = array();
 		}
-
+		
 		$options = array_merge($defaults, $options);
 		if(isset($options['getId'])) $options['getID'] = $options['getId']; // case alternate
-		$homepageID = (int) $this->wire('config')->rootPageID;
+		$homepageID = (int) $config->rootPageID;
+		$rootUrl = $this->wire()->config->urls->root;
+
+		if($options['allowUrl'] && $rootUrl !== '/' && strpos($path, $rootUrl) === 0) {
+			// root URL is subdirectory and path has that subdirectory
+			$rootName = trim($rootUrl, '/');
+			if(strpos($rootName, '/')) {
+				// root URL has multiple levels of subdirectories, remove them from path
+				list(,$path) = explode(rtrim($rootUrl, '/'), $path, 2);
+			} else {
+				// one subdirectory, see if a page has the same name
+				$query = $database->prepare('SELECT id FROM pages WHERE parent_id=1 AND name=:name');
+				$query->bindValue(':name', $rootName);
+				$query->execute();
+				if($query->rowCount() > 0) {
+					// leave subdirectory in path because page in site also matches subdirectory name
+				} else {
+					// remove root URL subdirectory from path 
+					list(,$path) = explode(rtrim($rootUrl, '/'), $path, 2);
+				}
+				$query->closeCursor();
+			}
+		}
 
 		if($path === '/') {
 			// this can only be homepage
 			return $options['getID'] ? $homepageID : $this->getById($homepageID, array('getOne' => true));
 		} else if(empty($path)) {
+			// path is empty and cannot match anything
 			return $options['getID'] ? 0 : $this->pages->newNullPage();
 		}
 
 		$_path = $path;
-		$path = $this->wire('sanitizer')->pagePathName($path, Sanitizer::toAscii);
+		$path = $sanitizer->pagePathName($path, Sanitizer::toAscii);
 		$pathParts = explode('/', trim($path, '/'));
-		$languages = $options['useLanguages'] ? $this->wire('languages') : null;
-		if($languages && !$this->wire('modules')->isInstalled('LanguageSupportPageNames')) $languages = null;
+		$_pathParts = $pathParts;
+		
+		$languages = $options['useLanguages'] ? $this->wire()->languages : null;
+		if($languages && !$languages->hasPageNames()) $languages = null;
 
 		$langKeys = array(':name' => 'name');
-		if($languages) foreach($languages as $language) {
-			if($language->isDefault()) continue;
-			$languageID = (int) $language->id;
-			$langKeys[":name$languageID"] = "name$languageID";
+		if($languages) {
+			foreach($languages as $language) {
+				if($language->isDefault()) continue;
+				$languageID = (int) $language->id;
+				$langKeys[":name$languageID"] = "name$languageID";
+			}
 		}
 
-		// first see if we can find a single page just having the name that's the last path part
-		// this is an optimization if the page name happens to be globally unique in the system, which is often the case
 		$pageID = 0;
 		$templatesID = 0;
 		$parentID = 0;
-		$name = end($pathParts);
-		$binds = array(':name' => $name);
-		$wheres = array();
-		$numParts = count($pathParts);
 
-		// can match 'name' or 'name123' cols where 123 is language ID
-		foreach($langKeys as $bindKey => $colName) {
-			$wheres[] = "$colName=$bindKey";
-			$binds[$bindKey] = $name;
-		}
-		$sql = 'SELECT id, templates_id, parent_id FROM pages WHERE (' . implode(' OR ', $wheres) . ') ';
+		if($options['allowPartial'] && !$options['allowUrlSegments']) {
+			// first see if we can find a single page just having the name that's the last path part
+			// this is an optimization if the page name happens to be globally unique in the system, which is often the case
+			$name = end($pathParts);
+			$binds = array(':name' => $name);
+			$wheres = array();
+			$numParts = count($pathParts);
 
-		if($numParts == 1) {
-			$sql .= ' AND (parent_id=:parent_id ';
-			$binds[':parent_id'] = $homepageID;
-			if($languages) {
-				$sql .= 'OR id=:homepage_id ';
-				$binds[':homepage_id'] = $homepageID;
+			// can match 'name' or 'name123' cols where 123 is language ID
+			foreach($langKeys as $bindKey => $colName) {
+				$wheres[] = "$colName=$bindKey";
+				$binds[$bindKey] = $name;
 			}
-			$sql .= ') ';
+			$sql = 'SELECT id, templates_id, parent_id FROM pages WHERE (' . implode(' OR ', $wheres) . ') ';
+
+			if($numParts == 1) {
+				$sql .= ' AND (parent_id=:parent_id ';
+				$binds[':parent_id'] = $homepageID;
+				if($languages) {
+					$sql .= 'OR id=:homepage_id ';
+					$binds[':homepage_id'] = $homepageID;
+				}
+				$sql .= ') ';
+			}
+
+			$sql .= 'LIMIT 2';
+			$query = $database->prepare($sql);
+			foreach($binds as $key => $value) $query->bindValue($key, $value);
+			$database->execute($query);
+			$numRows = $query->rowCount();
+			if($numRows == 1) {
+				// if only 1 page matches then we’ve found what we’re looking for
+				list($pageID, $templatesID, $parentID) = $query->fetch(\PDO::FETCH_NUM);
+			} else if($numRows == 0) {
+				// no page can possibly match last segment
+			} else if($numRows > 1) {
+				// multiple pages match
+			}
+			$query->closeCursor();
 		}
 
-		$sql .= 'LIMIT 2';
-		$database = $this->wire('database');
-		$query = $database->prepare($sql);
-		foreach($binds as $key => $value) $query->bindValue($key, $value);
-		$database->execute($query);
-		$numRows = $query->rowCount();
-
-		if(!$numRows) {
-			// no matches - no page in the system can possibly match
-			$query->closeCursor();
-
-		} else if($numRows == 1) {
-			// just one page has this name - we can stop now, avoiding further checks
-			list($pageID, $templatesID, $parentID) = $query->fetch(\PDO::FETCH_NUM);
-			$query->closeCursor();
-
-		} else {
-			// multiple pages have the name - go back and query again, joining all the path parts
-			$query->closeCursor();
-			$sql = "SELECT pages.id, pages.templates_id, pages.parent_id FROM pages ";
-			$n = 0;
+		if(!$pageID) {
+			// multiple pages have the name or partial path match is not allowed
+			// build a query joining all the path parts
+			$joins = array();
+			$wheres = array();
 			$binds = array();
+			$n = 0;
 			$lastAlias = "pages";
 			$lastPart = array_pop($pathParts);
 
@@ -1080,46 +1683,186 @@ class PagesLoader extends Wire {
 				$n++;
 				$alias = "_pages$n";
 				$part = array_pop($pathParts);
-				$wheres = array();
+				$whereORs = array();
 				foreach($langKeys as $bindKey => $colName) {
 					$bindKey .= "_$n";
-					$wheres[] = "$alias.$colName=$bindKey";
+					$whereORs[] = "$alias.$colName=$bindKey";
 					$binds[$bindKey] = $part;
 				}
-				$sql .= "JOIN pages AS $alias ON $lastAlias.parent_id=$alias.id AND (" . implode(' OR ', $wheres) . ') ';
+				$where = '(' . implode(' OR ', $whereORs) . ')';
+				$joins[] = "\nJOIN pages AS $alias ON $lastAlias.parent_id=$alias.id AND $where";
+				//$wheres[] = $where; // appears to be redundant as where only needed in join
 				$lastAlias = $alias;
 			}
 
-			$wheres = array();
+			$isRootParent = !$n;
+			// there were no pathParts, so we are matching just a rootParent
+			if($isRootParent) $wheres[] = "pages.parent_id=1";
+
+			$whereORs = array();
 			foreach($langKeys as $bindKey => $colName) {
-				$wheres[] = "pages.$colName=$bindKey";
+				$whereORs[] = "pages.$colName=$bindKey";
 				$binds[$bindKey] = $lastPart;
 			}
+			$wheres[] = '(' . implode(' OR ', $whereORs) . ')';
 
-			$sql .= 'WHERE (' . implode(' OR ', $wheres) . ') ';
+			$sql =
+				'SELECT pages.id, pages.templates_id, pages.parent_id, pages.name '  .
+				'FROM pages ' . implode(' ', $joins) . " \n" .
+				'WHERE (' . implode(' AND ', $wheres) . ') ';
+
 			$query = $database->prepare($sql);
 			foreach($binds as $key => $value) $query->bindValue($key, $value);
 			$database->execute($query);
-			if($query->rowCount()) {
-				list($pageID, $templatesID, $parentID) = $query->fetch(\PDO::FETCH_NUM);
+			$rowCount = $query->rowCount();
+			
+			if($rowCount === 1) {
+				// just one page matched
+				$row = $query->fetch(\PDO::FETCH_NUM); 
+				list($pageID, $templatesID, $parentID, ) = $row;
+				
+			} else if($rowCount > 1 && $isRootParent) {
+				// multiple pages matched off root
+				// use either 'default' language match or first matching language
+				$rows = array();
+				while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
+					$rows[] = $row;
+					if($row['name'] !== $lastPart) continue;
+					$rows = array($row); // force use of only this row (default language)
+					break;
+				}
+				$row = reset($rows);
+				list($pageID, $templatesID, $parentID) = array($row['id'], $row['templates_id'], $row['parent_id']); 
+				
+			} else if($rowCount > 1) {
+				// multiple pages matched somewhere in site, we need a stronger tool (pagesPathFinder)
+				$pathFinder = $this->pages->pathFinder();
+				$info = $pathFinder->get($_path, array(
+					'useLanguages' => $options['useLanguages'], 
+					'useHistory' => $options['useHistory'], 
+				));
+				if(!empty($info['page']['id'])) {
+					// pathFinder found a match
+					if(count($info['urlSegments']) && !$options['allowUrlSegments']) {
+						// found URL segments and they weren't allowed by options
+					} else {
+						$pageID = $info['page']['id'];
+						$templatesID = $info['page']['templates_id'];
+						$parentID = $info['page']['parent_id'];
+					}
+				}
+			} else if($isRootParent) {
+				// no page matches possible, maybe a URL segment for homepage?
+				
+			} else {
+				// no match found yet
 			}
+			
 			$query->closeCursor();
 		}
 
-		if(!$pageID && $options['useHistory'] && $this->wire('modules')->isInstalled('PagePathHistory')) {
+		if(!$pageID && $options['useHistory'] && $modules->isInstalled('PagePathHistory')) {
 			// if finding failed, check if there is a previous path it lived at, if history module available 
-			$page = $this->wire('modules')->get('PagePathHistory')->getPage($this->wire('sanitizer')->pagePathNameUTF8($_path));
-			return $options['getID'] ? $page->id : $page;
+			$pph = $modules->get('PagePathHistory'); /** @var PagePathHistory $pph */
+			$page = $pph->getPage($sanitizer->pagePathNameUTF8($_path));
+			if($page->id) return $options['getID'] ? $page->id : $page;
+		}
+
+		if(!$pageID && $options['allowUrlSegments'] && !$options['_isRecursive'] && count($_pathParts)) {
+			// attempt to match parent pages that allow URL segments
+			$pathParts = $_pathParts;
+			$urlSegments = array();
+			$recursiveOptions = array_merge($options, array(
+				'getID' => false,
+				'allowUrlSegments' => false,
+				'allowPartial' => false,
+				'_isRecursive' => true
+			));
+
+			do {
+				$urlSegment = array_pop($pathParts);
+				array_unshift($urlSegments, $urlSegment);
+				$path = '/' . implode('/', $pathParts);
+				$page = $this->getByPath($path, $recursiveOptions);
+			} while(count($pathParts) && !$page->id);
+
+			if($page->id) {
+				if($page->template->urlSegments) {
+					// matched page template allows URL segments
+					$page->setQuietly('_urlSegments', $urlSegments);
+					if(!$options['getID']) return $page;
+					$pageID = $page->id;
+				} else {
+					// page template does not allow URL segments, so path cannot match
+					$pageID = 0;
+				}
+			}
 		}
 
 		if($options['getID']) return (int) $pageID;
 		if(!$pageID) return $this->pages->newNullPage();
 
 		return $this->getById((int) $pageID, array(
-			'template' => $templatesID ? $this->wire('templates')->get((int) $templatesID) : null,
+			'template' => $templatesID ? $this->wire()->templates->get((int) $templatesID) : null,
 			'parent_id' => (int) $parentID,
 			'getOne' => true
 		));
+	}
+
+	/**
+	 * Get a fresh, non-cached copy of a Page from the database
+	 *
+	 * This method is the same as `$pages->get()` except that it skips over all memory caches when loading a Page.
+	 * Meaning, if the Page is already in memory, it doesn’t use the one in memory and instead reloads from the DB.
+	 * Nor does it place the Page it loads in any memory cache. Use this method to load a fresh copy of a page
+	 * that you might need to compare to an existing loaded copy, or to load a copy that won’t be seen or touched
+	 * by anything in ProcessWire other than your own code.
+	 *
+	 * ~~~~~
+	 * $p1 = $pages->get(1234);
+	 * $p2 = $pages->get($p1->path);
+	 * $p1 === $p2; // true: same Page instance
+	 *
+	 * $p3 = $pages->getFresh($p1);
+	 * $p1 === $p3; // false: same Page but different instance
+	 * ~~~~~
+	 *
+	 * #pw-advanced
+	 *
+	 * @param Page|string|array|Selectors|int $selectorOrPage Specify Page to get copy of, selector or ID
+	 * @param array $options Options to modify behavior
+	 * @return Page|NullPage
+	 * @since 3.0.172
+	 *
+	 */
+	public function getFresh($selectorOrPage, $options = array()) {
+		if(!isset($options['cache'])) $options['cache'] = false;
+		if(!isset($options['loadOptions'])) $options['loadOptions'] = array();
+		if(!isset($options['caller'])) $options['caller'] = 'pages.loader.getFresh';
+		$options['loadOptions']['getFromCache'] = false;
+		if(!isset($options['loadOptions']['cache'])) $options['loadOptions']['cache'] = false;
+		$selector = $selectorOrPage instanceof Page ? $selectorOrPage->id : $selectorOrPage;
+		return $this->get($selector, $options);
+	}
+
+	/**
+	 * Load total number of children from DB for given page
+	 * 
+	 * @param int|Page $page Page or Page ID
+	 * @return int
+	 * @throws WireException
+	 * @since 3.0.172
+	 * 
+	 */
+	public function getNumChildren($page) {
+		$pageId = $page instanceof Page ? $page->id : (int) $page;
+		$sql = 'SELECT COUNT(*) FROM pages WHERE parent_id=:id';
+		$query = $this->wire()->database->prepare($sql);
+		$query->bindValue(':id', $pageId, \PDO::PARAM_INT);
+		$query->execute();
+		$numChildren = (int) $query->fetchColumn(); 
+		$query->closeCursor();
+		return $numChildren;
 	}
 	
 	/**
@@ -1135,7 +1878,10 @@ class PagesLoader extends Wire {
 		if(empty($selector)) {
 			if(empty($options)) {
 				// optimize away a simple site-wide total count
-				return (int) $this->wire('database')->query("SELECT COUNT(*) FROM pages")->fetch(\PDO::FETCH_COLUMN);
+				$query = $this->wire()->database->query("SELECT COUNT(*) FROM pages");
+				$count = (int) $query->fetch(\PDO::FETCH_COLUMN);
+				$query->closeCursor();
+				return (int) $count;
 			} else {
 				// no selector string, but options specified
 				$selector = "id>0";
@@ -1192,8 +1938,8 @@ class PagesLoader extends Wire {
 	 */
 	public function getNativeColumns() {
 		if(empty($this->nativeColumns)) {
-			$query = $this->wire('database')->prepare("SELECT * FROM pages WHERE id=:id");
-			$query->bindValue(':id', $this->wire('config')->rootPageID);
+			$query = $this->wire()->database->prepare("SELECT * FROM pages WHERE id=:id");
+			$query->bindValue(':id', $this->wire()->config->rootPageID, \PDO::PARAM_INT);
 			$query->execute();
 			$row = $query->fetch(\PDO::FETCH_ASSOC);
 			foreach(array_keys($row) as $colName) {
@@ -1202,6 +1948,30 @@ class PagesLoader extends Wire {
 			$query->closeCursor();
 		}
 		return $this->nativeColumns;	
+	}
+
+	/**
+	 * Get value of of a native column in pages table for given page ID
+	 *
+	 * @param int|Page $id Page ID
+	 * @param string $column
+	 * @return int|string|bool Returns int/string value on success or boolean false if no matching row
+	 * @since 3.0.156
+	 * @throws \PDOException|WireException
+	 *
+	 */
+	public function getNativeColumnValue($id, $column) {
+		$id = (is_object($id) ? (int) "$id" : (int) $id);
+		if($id < 1) return false;
+		$database = $this->wire()->database;
+		if($database->escapeCol($column) !== $column) throw new WireException("Invalid column name: $column");
+		$query = $database->prepare("SELECT `$column` FROM pages WHERE id=:id");
+		$query->bindValue(':id', $id, \PDO::PARAM_INT);
+		$query->execute();
+		$value = $query->fetchColumn();
+		$query->closeCursor();
+		if(ctype_digit("$value") && strpos($column, 'name') !== 0) $value = (int) $value;
+		return $value;
 	}
 
 	/**
@@ -1248,6 +2018,18 @@ class PagesLoader extends Wire {
 	 */
 	public function getLastPageFinder() {
 		return $this->lastPageFinder;
+	}
+
+	/**
+	 * Are we currently loading pages?
+	 * 
+	 * @return bool
+	 * @since 3.0.195
+	 * 
+	 * 
+	 */
+	public function isLoading() {
+		return $this->loading;
 	}
 	
 }

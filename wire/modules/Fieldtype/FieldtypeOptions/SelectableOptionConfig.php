@@ -3,7 +3,7 @@
 /**
  * Inputfields and processing for Select Options Fieldtype
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -43,7 +43,8 @@ class SelectableOptionConfig extends Wire {
 	 */
 	public function __construct(Field $field, InputfieldWrapper $inputfields) {
 		$this->field = $field;
-		$this->fieldtype = $field->type; 
+		$fieldtype = $field->type; /** @var FieldtypeOptions $fieldtype */
+		$this->fieldtype = $fieldtype; 
 		$this->inputfields = $inputfields; 
 		$this->manager = $this->fieldtype->manager; 
 	}
@@ -60,7 +61,9 @@ class SelectableOptionConfig extends Wire {
 	protected function process(Inputfield $inputfield) {
 
 		$value = $this->wire('input')->post('_options');
-		if($this->wire('process') != 'ProcessField' || !$this->wire('user')->isSuperuser()) return;
+		$user = $this->wire('user'); /** @var User $user */
+		$process = $this->wire('process'); /** @var Process @process */
+		if($process != 'ProcessField' || (!$user->isSuperuser() && !$user->hasPermission('field-admin'))) return;
 		$ns = "$this$this->field"; // namespace for session
 
 		if(!is_null($value)) {
@@ -153,6 +156,7 @@ class SelectableOptionConfig extends Wire {
 
 		$labelSingle = $this->_('Single value');
 		$labelMulti = $this->_('Multiple values');
+		$labelSortable = $this->_('Multiple sortable values');
 
 		$f = $modules->get('InputfieldSelect');
 		$f->attr('name', 'inputfieldClass');
@@ -164,15 +168,17 @@ class SelectableOptionConfig extends Wire {
 			if($module instanceof ModulePlaceholder) {
 				$module = $modules->getModule($module->className(), array('noInit' => true));
 			}
-			if($module instanceof InputfieldSelect) {
+			if($module instanceof InputfieldSelect || $module instanceof InputfieldHasSelectableOptions) {
 				$name = str_replace('Inputfield', '', $module->className());
-				if($module instanceof InputfieldSelectMultiple) {
+				if($module instanceof InputfieldHasSortableValue) {
+					$name .= " ($labelSortable)";
+				} else if($module instanceof InputfieldSelectMultiple) {
 					$name .= " ($labelMulti)";
 				} else {
 					$name .= " ($labelSingle)";
 				}
 				$f->addOption($module->className(), $name);
-			}
+			} 
 		}
 		$value = $field->get('inputfieldClass');
 		if(!$value) $value = 'InputfieldSelect';
@@ -198,19 +204,23 @@ class SelectableOptionConfig extends Wire {
 		$inputfields->add($f);
 		$this->process($f); 
 
-		if($options->count() && $field->inputfieldClass && $f = $modules->get($field->inputfieldClass)) {
+		$inputfieldClass = $field->get('inputfieldClass');
+		if($options->count() && $inputfieldClass && $f = $modules->get($inputfieldClass)) {
 			$f->attr('name', 'initValue'); 
 			$f->label = $this->_('What options do you want pre-selected? (if any)'); 
 			$f->collapsed = Inputfield::collapsedBlank;
-			$f->description = sprintf($this->_('This field also serves as a preview of your selected input type (%s) and options.'), $field->inputfieldClass); 
+			$f->description = sprintf($this->_('This field also serves as a preview of your selected input type (%s) and options.'), $inputfieldClass); 
+			if(!$f instanceof InputfieldHasArrayValue) $f->addOption('', $this->_('None'));
 			foreach($options as $option) {
 				$f->addOption($option->id, $option->title); 
 			}
-			$f->attr('value', $field->initValue); 
-			if(!$this->field->required && !$this->field->requiredIf) {
-				$f->notes = $this->_('Please note: your selections here do not become active unless a value is *always* required for this field. See the "required" option on the Input tab of your field settings.');
+			$initValue = $field->get('initValue');
+			if($f instanceof InputfieldHasArrayValue && !is_array($initValue) && !empty($initValue)) $initValue = explode(' ', $initValue);
+			$f->attr('value', $initValue);
+			if(!$field->required && !$field->requiredIf) {
+				$f->notes = $this->_('Please note: Your pre-selection is not active, as this field is not a required field. Activate the option “required” in the input tab of the field.');
 			} else {
-				$f->notes = $this->_('This feature is active since a value is always required.'); 
+				$f->notes = $this->_('The pre-selection is active because this field is a required field.');
 			}
 			$inputfields->add($f); 
 			$inputfields->add($this->getInstructions());

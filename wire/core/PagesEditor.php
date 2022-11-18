@@ -5,7 +5,7 @@
  * 
  * Implements page manipulation methods of the $pages API variable
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  * 
  */ 
@@ -28,10 +28,16 @@ class PagesEditor extends Wire {
 	 */
 	protected $pages;
 
+	/**
+	 * Construct
+	 * 
+	 * @param Pages $pages
+	 *
+	 */
 	public function __construct(Pages $pages) {
 		$this->pages = $pages;
 
-		$config = $pages->wire('config');
+		$config = $pages->wire()->config;
 		if($config->dbStripMB4 && strtolower($config->dbEngine) != 'utf8mb4') {
 			$this->addHookAfter('Fieldtype::sleepValue', $this, 'hookFieldtypeSleepValueStripMB4');
 		}
@@ -71,17 +77,16 @@ class PagesEditor extends Wire {
 		}
 
 		if(!is_object($template)) {
-			$template = $this->wire('templates')->get($template);
+			$template = $this->wire()->templates->get($template);
 			if(!$template) throw new WireException("Unknown template");
 		}
 
-		$pageClass = wireClassName($template->pageClass ? $template->pageClass : 'Page', true);
-
-		$page = $this->pages->newPage(array(
-			'template' => $template,
-			'pageClass' => $pageClass
-		));
-		$page->parent = $parent;
+		$options = array('template' => $template, 'parent' => $parent);
+		if(isset($values['pageClass'])) {
+			$options['pageClass'] = $values['pageClass'];
+			unset($values['pageClass']);
+		}
+		$page = $this->pages->newPage($options); 
 
 		$exceptionMessage = "Unable to add new page using template '$template' and parent '{$page->parent->path}'.";
 
@@ -101,6 +106,11 @@ class PagesEditor extends Wire {
 			unset($values['title']);
 		}
 
+		if(isset($values['status'])) {
+			$page->status = $values['status'];
+			unset($values['status']);
+		}
+
 		// save page before setting $values just in case any fieldtypes
 		// require the page to have an ID already (like file-based)
 		if(!$this->pages->save($page)) throw new WireException($exceptionMessage);
@@ -110,6 +120,17 @@ class PagesEditor extends Wire {
 			unset($values['id'], $values['parent'], $values['template']); // fields that may not be set from this array
 			foreach($values as $key => $value) $page->set($key, $value);
 			$this->pages->save($page);
+		}
+		
+		// get a fresh copy of the page
+		if($page->id) {
+			$inserted = $page->_inserted;
+			$of = $this->pages->outputFormatting;
+			if($of) $this->pages->setOutputFormatting(false);
+			$p = $this->pages->getById($page->id, $template, $page->parent_id);
+			if($p->id) $page = $p;
+			if($of) $this->pages->setOutputFormatting(true);
+			$page->setQuietly('_inserted', $inserted);
 		}
 
 		return $page;
@@ -188,7 +209,7 @@ class PagesEditor extends Wire {
 		}
 
 		// check for a parent change and whether it is allowed
-		if($saveable && $page->parentPrevious && empty($options['ignoreFamily'])) {
+		if($saveable && $page->id && $page->parentPrevious && empty($options['ignoreFamily'])) {
 			// parent has changed, check that the move is allowed
 			$saveable = $this->isMoveable($page, $page->parentPrevious, $page->parent, $reason); 
 		}
@@ -210,7 +231,7 @@ class PagesEditor extends Wire {
 		
 		if($oldParent->id == $newParent->id) return true; 
 		
-		$config = $this->wire('config');
+		$config = $this->wire()->config;
 		$moveable = false;
 		$isSystem = $page->hasStatus(Page::statusSystem) || $page->hasStatus(Page::statusSystemID);
 		$toTrash = $newParent->id > 0 && $newParent->isTrash();
@@ -292,7 +313,7 @@ class PagesEditor extends Wire {
 			$error = "it has “system” and/or “systemID” status";
 		} else if($page->hasStatus(Page::statusLocked)) {
 			$error = "it has “locked” status";
-		} else if($page->id === $this->wire('page')->id && $this->wire('config')->installedAfter('2019-04-04')) {
+		} else if($page->id === $this->wire()->page->id && $this->wire()->config->installedAfter('2019-04-04')) {
 			$error = "it is the current page being viewed, try \$pages->trash() instead";
 		}
 	
@@ -348,7 +369,7 @@ class PagesEditor extends Wire {
 		foreach($page->template->fieldgroup as $field) {
 			if($page->isLoaded($field->name)) continue; // value already set
 			if(!$page->hasField($field)) continue; // field not valid for page
-			if(!strlen($field->defaultValue)) continue; // no defaultValue property defined with Fieldtype config inputfields
+			if(!strlen("$field->defaultValue")) continue; // no defaultValue property defined with Fieldtype config inputfields
 			try {
 				$blankValue = $field->type->getBlankValue($page, $field);
 				if(is_object($blankValue) || is_array($blankValue)) continue; // we don't currently handle complex types
@@ -359,7 +380,7 @@ class PagesEditor extends Wire {
 				}
 			} catch(\Exception $e) {
 				$this->trackException($e, false, true);
-				if($this->wire('database')->inTransaction()) throw $e;
+				if($this->wire()->database->inTransaction()) throw $e;
 			}
 		}
 	}
@@ -419,8 +440,8 @@ class PagesEditor extends Wire {
 
 		if(is_string($options)) $options = Selectors::keyValueStringToArray($options);
 		$options = array_merge($defaultOptions, $options);
-		$user = $this->wire('user');
-		$languages = $this->wire('languages');
+		$user = $this->wire()->user;
+		$languages = $this->wire()->languages;
 		$language = null;
 
 		// if language support active, switch to default language so that saved fields and hooks don't need to be aware of language
@@ -472,20 +493,26 @@ class PagesEditor extends Wire {
 	protected function savePageQuery(Page $page, array $options) {
 
 		$isNew = $page->isNew();
-		$database = $this->wire('database');
-		$user = $this->wire('user');
-		$config = $this->wire('config');
+		$database = $this->wire()->database;
+		$sanitizer = $this->wire()->sanitizer;
+		$config = $this->wire()->config;
+		$user = $this->wire()->user;
 		$userID = $user ? $user->id : $config->superUserPageID;
 		$systemVersion = $config->systemVersion;
+		$sql = '';
+		
 		if(!$page->created_users_id) $page->created_users_id = $userID;
-		if($page->isChanged('status') && empty($options['noHooks'])) $this->pages->statusChangeReady($page);
+		
+		if($page->isChanged('status') && empty($options['noHooks'])) {
+			$this->pages->statusChangeReady($page);
+		}
+		
 		if(empty($options['noHooks'])) {
 			$extraData = $this->pages->saveReady($page); 
 			$this->pages->savePageOrFieldReady($page);
 		} else {
 			$extraData = array();
 		}
-		$sql = '';
 
 		if($this->pages->names()->isUntitledPageName($page->name)) {
 			$this->pages->setupPageName($page);
@@ -494,7 +521,7 @@ class PagesEditor extends Wire {
 		$data = array(
 			'parent_id' => (int) $page->parent_id,
 			'templates_id' => (int) $page->template->id,
-			'name' => $this->wire('sanitizer')->pageName($page->name, Sanitizer::toAscii),
+			'name' => $sanitizer->pageName($page->name, Sanitizer::toAscii),
 			'status' => (int) $page->status,
 			'sort' =>  ($page->sort > -1 ? (int) $page->sort : 0)
 		);
@@ -575,7 +602,11 @@ class PagesEditor extends Wire {
 			}
 		} while($keepTrying && (++$tries < $maxTries));
 
-		if($result && ($isNew || !$page->id)) $page->id = $database->lastInsertId();
+		if($result && ($isNew || !$page->id)) {
+			$page->id = (int) $database->lastInsertId();
+			$page->setQuietly('_inserted', time());
+		}
+		
 		if($options['forceID']) $page->id = (int) $options['forceID'];
 
 		return $result;
@@ -607,10 +638,13 @@ class PagesEditor extends Wire {
 		if($errorCode != 23000) return false; 
 		
 		if(!$this->pages->names()->hasAutogenName($page) && !$options['adjustName']) return false;
+		
+		$languages = $this->wire()->languages;
+		$sanitizer = $this->wire()->sanitizer;
 
 		// account for the duplicate possibly being a multi-language name field
 		// i.e. “Duplicate entry 'bienvenido-2-1001' for key 'name1013_parent_id'”
-		if($this->wire('languages') && preg_match('/\b(name\d*)_parent_id\b/', $exception->getMessage(), $matches)) {
+		if($languages && preg_match('/\b(name\d*)_parent_id\b/', $exception->getMessage(), $matches)) {
 			$nameField = $matches[1];
 		} else {
 			$nameField = 'name';
@@ -620,7 +654,7 @@ class PagesEditor extends Wire {
 		$pageName = $page->get($nameField);
 		$pageName = $this->pages->names()->incrementName($pageName);
 		$page->set($nameField, $pageName);
-		$query->bindValue(":$nameField", $this->wire('sanitizer')->pageName($pageName, Sanitizer::toAscii));
+		$query->bindValue(":$nameField", $sanitizer->pageName($pageName, Sanitizer::toAscii));
 		
 		// indicate that page has a modified name 
 		$this->pages->names()->hasAdjustedName($page, true);
@@ -647,14 +681,18 @@ class PagesEditor extends Wire {
 
 		// update children counts for current/previous parent
 		if($isNew) {
+			// new page
 			$page->parent->numChildren++;
-		} else {
-			if($page->parentPrevious && $page->parentPrevious->id != $page->parent->id) {
-				$page->parentPrevious->numChildren--;
-				$page->parent->numChildren++;
-			}
+			
+		} else if($page->parentPrevious && $page->parentPrevious->id != $page->parent->id) {
+			// parent changed
+			$page->parentPrevious->numChildren--;
+			$page->parent->numChildren++;
 		}
-
+	
+		// save any needed updates to pages_parents table
+		$this->pages->parents()->save($page);
+		
 		// if page hasn't changed, don't continue further
 		if(!$page->isChanged() && !$isNew) {
 			$this->pages->debugLog('save', '[not-changed]', true);
@@ -677,17 +715,21 @@ class PagesEditor extends Wire {
 
 		// save each individual Fieldtype data in the fields_* tables
 		foreach($page->fieldgroup as $field) {
+			$fieldtype = $field->type;
 			$name = $field->name;
-			if($options['noFields'] || isset($corruptedFields[$name]) || !$field->type || !$page->hasField($field)) {
+			if($options['noFields'] || isset($corruptedFields[$name]) || !$fieldtype || !$page->hasField($field)) {
 				unset($changes[$name]);
 				unset($changesValues[$name]); 
 			} else {
 				try {
-					$field->type->savePageField($page, $field);
+					$fieldtype->savePageField($page, $field);
 				} catch(\Exception $e) {
-					$error = sprintf($this->_('Error saving field "%s"'), $name) . ' - ' . $e->getMessage();
+					$label = $field->getLabel();
+					$message = $e->getMessage();
+					if(strpos($message, $label) !== false) $label = $name;
+					$error = sprintf($this->_('Error saving field "%s"'), $label) . ' — ' . $message;
 					$this->trackException($e, true, $error);
-					if($this->wire('database')->inTransaction()) throw $e;
+					if($this->wire()->database->inTransaction()) throw $e;
 				}
 			}
 		}
@@ -695,7 +737,9 @@ class PagesEditor extends Wire {
 		// return outputFormatting state
 		$page->of($of);
 
-		if(empty($page->template->sortfield)) $this->pages->sortfields()->save($page);
+		// sortfield for children
+		$templateSortfield = $page->template->sortfield;
+		if(empty($templateSortfield)) $this->pages->sortfields()->save($page);
 		
 		if($options['resetTrackChanges']) {
 			if($options['noFields']) {
@@ -733,30 +777,6 @@ class PagesEditor extends Wire {
 		// operations can be access controlled. 
 		if($isNew || $page->parentPrevious || $page->templatePrevious) $this->wire(new PagesAccess($page));
 
-		// lastly determine whether the pages_parents table needs to be updated for the find() cache
-		// and call upon $this->saveParents where appropriate. 
-		if($page->parentPrevious && $page->numChildren > 0) {
-			// page is moved and it has children
-			$this->saveParents($page->id, $page->numChildren);
-			if($page->parent->numChildren == 1) $this->saveParents($page->parent_id, $page->parent->numChildren);
-
-		} else if(($page->parentPrevious && $page->parent->numChildren == 1) ||
-			($isNew && $page->parent->numChildren == 1) ||
-			($page->_forceSaveParents)) {
-			// page is moved and is the first child of it's new parent
-			// OR page is NEW and is the first child of it's parent
-			// OR $page->_forceSaveParents is set (debug/debug, can be removed later)
-			$this->saveParents($page->parent_id, $page->parent->numChildren);
-			
-		} else if($page->parentPrevious && $page->parent->numChildren > 1 && $page->parent->parent_id > 1) {
-			$this->saveParents($page->parent->parent_id, $page->parent->parent->numChildren);
-		}
-
-		if($page->parentPrevious && $page->parentPrevious->numChildren == 0) {
-			// $page was moved and it's previous parent is now left with no children, this ensures the old entries get deleted
-			$this->saveParents($page->parentPrevious->id, 0);
-		}
-
 		// trigger hooks
 		if(empty($options['noHooks'])) {
 			$this->pages->saved($page, $changes, $changesValues);
@@ -772,6 +792,47 @@ class PagesEditor extends Wire {
 
 		return true;
 	}
+	
+	/**
+	 * TBD Identify if parent changed and call saveParentsTable() where appropriate
+	 *
+	 * @param Page $page Page to save parent(s) for
+	 * @param bool $isNew If page is newly created during this save this should be true, otherwise false
+	 *
+	protected function savePageParent(Page $page, $isNew) {
+		
+		if($page->parentPrevious || $page->_forceSaveParents || $isNew) {
+			$this->pages->parents()->rebuild($page);
+		}
+		
+		// saveParentsTable option is always true unless manually disabled from a hook
+		if($page->parentPrevious && !$isNew && $page->numChildren > 0) {
+			// existing page was moved and it has children
+			if($page->parent->numChildren == 1) {
+				// first child of new parent
+				$this->pages->parents()->rebuildPage($page->parent);
+			} else {
+				$this->pages->parents()->rebuildPage($page);
+			}
+
+		} else if(($page->parentPrevious && $page->parent->numChildren == 1) ||
+			($isNew && $page->parent->numChildren == 1) ||
+			($page->_forceSaveParents)) {
+			// page is moved and is the first child of its new parent
+			// OR page is NEW and is the first child of its parent
+			// OR $page->_forceSaveParents is set (debug/debug, can be removed later)
+			$this->pages->parents()->rebuildPage($page->parent);
+
+		} else if($page->parentPrevious && $page->parent->numChildren > 1 && $page->parent->parent_id > 1) {
+			$this->pages->parents()->rebuildPage($page->parent->parent);
+		}
+
+		if($page->parentPrevious && $page->parentPrevious->numChildren == 0) {
+			// $page was moved and its previous parent is now left with no children, this ensures the old entries get deleted
+			$this->pages->parents()->rebuild($page->parentPrevious->id);
+		}
+	}
+	 */
 	
 	/**
 	 * Save just a field from the given page as used by Page::save($field)
@@ -801,7 +862,7 @@ class PagesEditor extends Wire {
 		}
 		
 		if($field && (is_string($field) || is_int($field))) {
-			$field = $this->wire('fields')->get($field);
+			$field = $this->wire()->fields->get($field);
 		}
 		
 		if(!$field instanceof Field) {
@@ -824,9 +885,9 @@ class PagesEditor extends Wire {
 		if($field->type->savePageField($page, $field)) {
 			$page->untrackChange($field->name);
 			if(empty($options['quiet'])) {
-				$user = $this->wire('user');
-				$userID = (int) ($user ? $user->id : $this->wire('config')->superUserPageID);
-				$database = $this->wire('database');
+				$user = $this->wire()->user;
+				$userID = (int) ($user ? $user->id : $this->wire()->config->superUserPageID);
+				$database = $this->wire()->database;
 				$query = $database->prepare("UPDATE pages SET modified_users_id=:userID, modified=NOW() WHERE id=:pageID");
 				$query->bindValue(':userID', $userID, \PDO::PARAM_INT);
 				$query->bindValue(':pageID', $page->id, \PDO::PARAM_INT);
@@ -844,75 +905,6 @@ class PagesEditor extends Wire {
 		$this->pages->debugLog('saveField', "$page:$field", $return);
 		
 		return $return;
-	}
-
-	/**
-	 * Save references to the Page's parents in pages_parents table, as well as any other pages affected by a parent change
-	 *
-	 * Any pages_id passed into here are assumed to have children
-	 *
-	 * @param int $pages_id ID of page to save parents from
-	 * @param int $numChildren Number of children this Page has
-	 * @param int $level Recursion level, for debugging.
-	 * @return bool
-	 *
-	 */
-	protected function saveParents($pages_id, $numChildren, $level = 0) {
-
-		$pages_id = (int) $pages_id;
-		if(!$pages_id) return false;
-		$database = $this->wire('database');
-
-		$query = $database->prepare("DELETE FROM pages_parents WHERE pages_id=:pages_id");
-		$query->bindValue(':pages_id', $pages_id, \PDO::PARAM_INT);
-		$query->execute();
-
-		if(!$numChildren) return true;
-
-		$insertSql = '';
-		$id = $pages_id;
-		$cnt = 0;
-		$query = $database->prepare("SELECT parent_id FROM pages WHERE id=:id");
-
-		do {
-			if($id < 2) break; // home has no parent, so no need to do that query
-			$query->bindValue(":id", $id, \PDO::PARAM_INT);
-			$query->execute();
-			list($id) = $query->fetch(\PDO::FETCH_NUM);
-			$id = (int) $id;
-			if($id < 2) break; // no need to record 1 for every page, since it is assumed
-			$insertSql .= "($pages_id, $id),";
-			$cnt++;
-
-		} while(1);
-
-		if($insertSql) {
-			$sql = 
-				'INSERT INTO pages_parents (pages_id, parents_id) ' . 
-				'VALUES' . rtrim($insertSql, ',') . ' ' . 
-				'ON DUPLICATE KEY UPDATE parents_id=VALUES(parents_id)';
-			$database->exec($sql);
-		}
-
-		// find all children of $pages_id that themselves have children
-		$sql = 	
-			"SELECT pages.id, COUNT(children.id) AS numChildren " .
-			"FROM pages " .
-			"JOIN pages AS children ON children.parent_id=pages.id " .
-			"WHERE pages.parent_id=:pages_id " .
-			"GROUP BY pages.id ";
-
-		$query = $database->prepare($sql);
-		$query->bindValue(':pages_id', $pages_id, \PDO::PARAM_INT);
-		$database->execute($query);
-
-		/** @noinspection PhpAssignmentInConditionInspection */
-		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
-			$this->saveParents($row['id'], $row['numChildren'], $level+1);
-		}
-		$query->closeCursor();
-
-		return true;
 	}
 
 	/**
@@ -985,8 +977,7 @@ class PagesEditor extends Wire {
 	 */
 	public function savePageStatus($pageID, $status, $recursive = false, $remove = false) {
 
-		/** @var WireDatabasePDO $database */
-		$database = $this->wire('database');
+		$database = $this->wire()->database;
 		$rowCount = 0;
 		$multi = is_array($pageID) || $pageID instanceof PageArray;
 		$status = (int) $status;
@@ -1088,8 +1079,8 @@ class PagesEditor extends Wire {
 	 * @param bool|array $recursive If set to true, then this will attempt to delete all children too.
 	 *   If you don't need this argument, optionally provide $options array instead. 
 	 * @param array $options Optional settings to change behavior:
-	 *   - uncacheAll (bool): Whether to clear memory cache after delete (default=false)
-	 *   - recursive (bool): Same as $recursive argument, may be specified in $options array if preferred.
+	 * - `uncacheAll` (bool): Whether to clear memory cache after delete (default=false)
+	 * - `recursive` (bool): Same as $recursive argument, may be specified in $options array if preferred.
 	 * @return bool|int Returns true (success), or integer of quantity deleted if recursive mode requested.
 	 * @throws WireException on fatal error
 	 *
@@ -1099,53 +1090,44 @@ class PagesEditor extends Wire {
 		$defaults = array(
 			'uncacheAll' => false, 
 			'recursive' => is_bool($recursive) ? $recursive : false,
+			// internal use properties:
+			'_level' => 0,
+			'_deleteBranch' => false,
 		);
-	
+
 		if(is_array($recursive)) $options = $recursive; 	
 		$options = array_merge($defaults, $options);
 
 		$this->isDeleteable($page, true); // throws WireException
 		$numDeleted = 0;
+		$numChildren = $page->numChildren;
+		$deleteBranch = false;
 
-		if($page->numChildren) {
+		if($numChildren) {
 			if(!$options['recursive']) {
 				throw new WireException("Can't delete Page $page because it has one or more children.");
-			} else foreach($page->children("include=all") as $child) {
+			}
+			if($options['_level'] === 0) {
+				$deleteBranch = true;
+				$options['_deleteBranch'] = $page;
+				$this->pages->deleteBranchReady($page, $options);
+			}
+			foreach($page->children('include=all') as $child) {
 				/** @var Page $child */
-				if($this->pages->delete($child, true, $options)) {
-					$numDeleted++;
-				} else {
-					throw new WireException("Error doing recursive page delete, stopped by page $child");
-				}
+				$options['_level']++;
+				$result = $this->pages->delete($child, true, $options);
+				$options['_level']--;
+				if(!$result) throw new WireException("Error doing recursive page delete, stopped by page $child");
+				$numDeleted += $result;
 			}
 		}
 
 		// trigger a hook to indicate delete is ready and WILL occur
-		$this->pages->deleteReady($page);
+		$this->pages->deleteReady($page, $options);
 
-		foreach($page->fieldgroup as $field) {
-			if(!$field->type->deletePageField($page, $field)) {
-				$this->error("Unable to delete field '$field' from page '$page'");
-			}
-		}
-
-		try {
-			if(PagefilesManager::hasPath($page)) $page->filesManager->emptyAllPaths();
-		} catch(\Exception $e) {
-		}
-
-		$page->meta()->removeAll();
+		$this->clear($page);
 		
-		/** @var PagesAccess $access */
-		$access = $this->wire(new PagesAccess());
-		$access->deletePage($page);
-
-		$database = $this->wire('database');
-
-		$query = $database->prepare("DELETE FROM pages_parents WHERE pages_id=:page_id");
-		$query->bindValue(":page_id", $page->id, \PDO::PARAM_INT);
-		$query->execute();
-
+		$database = $this->wire()->database;
 		$query = $database->prepare("DELETE FROM pages WHERE id=:page_id LIMIT 1"); // QA
 		$query->bindValue(":page_id", $page->id, \PDO::PARAM_INT);
 		$query->execute();
@@ -1153,8 +1135,9 @@ class PagesEditor extends Wire {
 		$this->pages->sortfields()->delete($page);
 		$page->setTrackChanges(false);
 		$page->status = Page::statusDeleted; // no need for bitwise addition here, as this page is no longer relevant
-		$this->pages->deleted($page);
+		$this->pages->deleted($page, $options);
 		$numDeleted++;
+		if($deleteBranch) $this->pages->deletedBranch($page, $options, $numDeleted);
 		if($options['uncacheAll']) $this->pages->uncacheAll($page);
 		$this->pages->debugLog('delete', $page, true);
 
@@ -1176,12 +1159,18 @@ class PagesEditor extends Wire {
 	 *
 	 */
 	public function _clone(Page $page, Page $parent = null, $recursive = true, $options = array()) {
+		
+		$defaults = array(
+			'forceID' => 0, 
+			'set' => array(), 
+			'recursionLevel' => 0, // recursion level (internal use only)
+		);
 
 		if(is_string($options)) $options = Selectors::keyValueStringToArray($options);
-		if(!isset($options['recursionLevel'])) $options['recursionLevel'] = 0; // recursion level
+		$options = array_merge($defaults, $options);
 		if($parent === null) $parent = $page->parent; 
 
-		if(isset($options['set']) && isset($options['set']['name']) && strlen($options['set']['name'])) {
+		if(count($options['set']) && !empty($options['set']['name'])) {
 			$name = $options['set']['name'];
 		} else {
 			$name = $this->pages->names()->uniquePageName(array(
@@ -1203,24 +1192,24 @@ class PagesEditor extends Wire {
 
 		// clone in memory
 		$copy = clone $page;
-		$copy->setQuietly('_cloning', $page);
-		$copy->id = isset($options['forceID']) ? (int) $options['forceID'] : 0;
 		$copy->setIsNew(true);
+		$copy->of(false);
+		$copy->setQuietly('_cloning', $page);
+		$copy->setQuietly('id', $options['forceID'] > 1 ? (int) $options['forceID'] : 0);
+		$copy->setQuietly('numChildren', 0);
+		$copy->setQuietly('created', time());
+		$copy->setQuietly('modified', time());
 		$copy->name = $name;
 		$copy->parent = $parent;
-		$copy->of(false);
-		$copy->set('numChildren', 0);
-		$copy->created = time();
-		$copy->modified = time();
 		
 		if(!isset($options['quiet']) || $options['quiet']) {
 			$options['quiet'] = true;
-			$copy->created_users_id = $user->id;
-			$copy->modified_users_id = $user->id;
+			$copy->setQuietly('created_users_id', $user->id);
+			$copy->setQuietly('modified_users_id', $user->id);
 		}
 		
 		// set any properties indicated in options	
-		if(isset($options['set']) && is_array($options['set'])) {
+		if(count($options['set'])) {
 			foreach($options['set'] as $key => $value) {
 				$copy->set($key, $value);
 				// quiet option required for setting modified time or user
@@ -1263,32 +1252,39 @@ class PagesEditor extends Wire {
 		if($page->numChildren && $recursive) {
 			$start = 0;
 			$limit = 200;
+			$numChildrenCopied = 0;
 			do {
 				$children = $page->children("include=all, start=$start, limit=$limit");
 				$numChildren = $children->count();
 				foreach($children as $child) {
 					/** @var Page $child */
-					$this->pages->clone($child, $copy, true, array('recursionLevel' => $options['recursionLevel'] + 1));
+					$childCopy = $this->pages->clone($child, $copy, true, array(
+						'recursionLevel' => $options['recursionLevel'] + 1,
+					));
+					if($childCopy->id) $numChildrenCopied++;
 				}
 				$start += $limit;
 				$this->pages->uncacheAll();
 			} while($numChildren);
+			$copy->setQuietly('numChildren', $numChildrenCopied); 
 		}
 
 		$copy->parentPrevious = null;
+		$copy->setQuietly('_cloning', null);
 
-		// update pages_parents table, only when at recursionLevel 0 since pagesParents is already recursive
-		if($recursive && $options['recursionLevel'] === 0) {
-			$this->saveParents($copy->id, $copy->numChildren);
-		}
-		
 		if($options['recursionLevel'] === 0) {
+			// update pages_parents table, only when at recursionLevel 0 since parents()->rebuild() already descends 
+			if($copy->numChildren) {
+				$copy->setIsNew(true);
+				$this->pages->parents()->rebuild($copy);
+				$copy->setIsNew(false);
+			}
+			// update sort
 			if($copy->parent()->sortfield() == 'sort') {
 				$this->sortPage($copy, $copy->sort, true);
 			}
 		}
 
-		$copy->setQuietly('_cloning', null);
 		$copy->of($of);
 		$page->of($of);
 		$page->meta()->copyTo($copy->id); 
@@ -1303,17 +1299,31 @@ class PagesEditor extends Wire {
 	 * Update page modified/created/published time to now (or given time)
 	 * 
 	 * @param Page|PageArray|array $pages May be Page, PageArray or array of page IDs (integers)
-	 * @param null|int|string $time Omit (null) to update to now, or specify unix timestamp or strtotime() recognized time string
+	 * @param null|int|string|array $options Omit (null) to update to now, or unix timestamp or strtotime() recognized time string, 
+	 *  or if you do not need this argument, you may optionally substitute the $type argument here, 
+	 *  or in 3.0.183+ you can also specify array of options here instead:
+	 *  - `time` (string|int|null): Unix timestamp or strtotime() recognized string to use, omit for use current time (default=null)
+	 *  - `type` (string): One of 'modified', 'created', 'published' (default='modified')
+	 *  - `user` (bool|User): True to also update modified/created user to current user, or specify User object to use (default=false)
 	 * @param string $type Date type to update, one of 'modified', 'created' or 'published' (default='modified') Added 3.0.147
+	 *  Skip this argument if using options array for previous argument or if using the default type 'modified'.
 	 * @throws WireException|\PDOException if given invalid format for $modified argument or failed database query
 	 * @return bool True on success, false on fail
 	 * 
 	 */
-	public function touch($pages, $time = null, $type = 'modified') {
+	public function touch($pages, $options = null, $type = 'modified') {
 		
-		/** @var WireDatabasePDO $database */
-		$database = $this->wire('database');
-		
+		$defaults = array(
+			'time' => (is_string($options) || is_int($options) ? $options : null),
+			'type' => $type,
+			'user' => false,
+		);
+
+		$options = is_array($options) ? array_merge($defaults, $options) : $defaults;
+		$database = $this->wire()->database;
+		$time = $options['time']; 
+		$type = $options['type'];
+		$user = $options['user'] === true ? $this->wire()->user : $options['user'];
 		$ids = array();
 		
 		if($time === 'modified' || $time === 'created' || $time === 'published') {
@@ -1362,17 +1372,22 @@ class PagesEditor extends Wire {
 			
 		} else if(is_int($time) || ctype_digit($time)) {
 			$time = (int) $time;
-			$sql .= ':time';
+			$sql .= ':time ';
 			
 		} else if(is_string($time)) {
 			$time = strtotime($time);
 			if(!$time) throw new WireException("Unrecognized time format provided to Pages::touch()");
-			$sql .= ':time';
+			$sql .= ':time ';
 		}
+
+		if($user && $user instanceof User && ($col === 'modified' || $col === 'created')) {
+			$sql .= ", {$col}_users_id=:user ";
+		} 
 		
 		$sql .= 'WHERE id IN(' . implode(',', $ids) . ')';
 		$query = $database->prepare($sql);
 		if(strpos($sql, ':time')) $query->bindValue(':time', date('Y-m-d H:i:s', $time));
+		if(strpos($sql, ':user')) $query->bindValue(':user', $user->id, \PDO::PARAM_INT);
 		
 		return $database->execute($query);
 	}
@@ -1423,7 +1438,7 @@ class PagesEditor extends Wire {
 	 */
 	public function sortPage(Page $page, $sort = null, $after = false) {
 	
-		$database = $this->wire('database');
+		$database = $this->wire()->database;
 
 		// reorder siblings having same or greater sort value, when necessary
 		if($page->id <= 1) return 0;
@@ -1518,7 +1533,7 @@ class PagesEditor extends Wire {
 	public function sortRebuild(Page $parent) {
 		
 		if(!$parent->id || !$parent->numChildren) return 0;
-		$database = $this->wire('database');
+		$database = $this->wire()->database;
 		$sorts = array();
 		$sort = 0;
 		
@@ -1562,6 +1577,320 @@ class PagesEditor extends Wire {
 	}
 
 	/**
+	 * Replace one page with another (work in progress)
+	 * 
+	 * @param Page $oldPage
+	 * @param Page $newPage
+	 * @return Page
+	 * @throws WireException
+	 * @since 3.0.189 But not yet available in public API
+	 * 
+	 */
+	protected function replace(Page $oldPage, Page $newPage) {
+		
+		if($newPage->numChildren) {
+			throw new WireException('Page with children cannot replace another');
+		}
+
+		$database = $this->wire()->database;
+		
+		$this->pages->cacher()->uncache($oldPage);
+		$this->pages->cacher()->uncache($newPage);
+		
+		$prevId = $newPage->id;
+		$id = $oldPage->id;
+		$parent = $oldPage->parent;
+		$prevTemplate = $oldPage->template;
+		
+		$newPage->parent = $parent;
+		$newPage->templatePrevious = $prevTemplate;
+
+		$this->clear($oldPage, array(
+			'clearParents' => false, 
+			'clearAccess' => $prevTemplate->id != $newPage->template->id, 
+			'clearSortfield' => false,
+		)); 
+		
+		$binds = array(
+			':id' => $id, 
+			':parent_id' => $parent->id, 
+			':prev_id' => $prevId, 
+		);
+		
+		$sqls = array();
+		$sqls[] = 'UPDATE pages SET id=:id, parent_id=:parent_id WHERE id=:prev_id';
+	
+		foreach($newPage->template->fieldgroup as $field) {
+			/** @var Field $field */
+			$field->type->replacePageField($newPage, $oldPage, $field);
+		}
+		
+		foreach($sqls as $sql) {
+			$query = $database->prepare($sql);
+			foreach($binds as $bindKey => $bindValue) {
+				if(strpos($sql, $bindKey) === false) continue;
+				$query->bindValue($bindKey, $bindValue);
+				$query->execute();
+			}
+		}
+
+		$newPage->id = $id;
+		
+		$this->save($newPage);
+		
+		$page = $this->pages->getById($id, $newPage->template, $parent->id);
+		
+		return $page;
+	}
+
+	/**
+	 * Clear a page of its data
+	 * 
+	 * @param Page $page
+	 * @param array $options
+	 * @return bool
+	 * @throws WireException
+	 * @since 3.0.189
+	 * 
+	 */
+	public function clear(Page $page, array $options = array()) {
+		
+		$defaults = array(
+			'clearMethod' => 'delete', // 'delete' or 'empty'
+			'haltOnError' => false,
+			'clearFields' => true,
+			'clearFiles' => true, 
+			'clearMeta' => true, 
+			'clearAccess' => true, 
+			'clearSortfield' => true,
+			'clearParents' => true,
+		);
+
+		$options = array_merge($defaults, $options);
+		$errors = array();
+		$halt = false;
+
+		if($options['clearFields']) {
+			foreach($page->fieldgroup as $field) {
+				/** @var Field $field  */
+				if($options['clearMethod'] === 'delete') {
+						$result = $field->type->deletePageField($page, $field);
+					} else {
+						$result = $field->type->emptyPageField($page, $field);
+					}
+				if(!$result) {	
+					$errors[] = "Unable to clear field '$field' from page $page";
+					$halt = $options['haltOnError'];
+					if($halt) break;
+				}
+			}
+		}
+		
+		if($options['clearFiles'] && !$halt) {
+			$error = "Error clearing files for page $page"; 
+			try {
+				if(PagefilesManager::hasPath($page)) {
+					if(!$page->filesManager->emptyAllPaths()) {
+						$errors[] = $error;
+						$halt = $options['haltOnError'];
+					}
+				}
+			} catch(\Exception $e) {
+				$errors[] = $error . ' - ' . $e->getMessage();
+				$halt = $options['haltOnError'];
+			}
+		}
+
+		if($options['clearMeta'] && !$halt) {
+			try {
+				$page->meta()->removeAll();
+			} catch(\Exception $e) {
+				$errors[] = "Error clearing meta for page $page";
+				$halt = $options['haltOnError'];
+			}
+		}
+
+		if($options['clearAccess'] && !$halt) {
+			/** @var PagesAccess $access */
+			$access = $this->wire(new PagesAccess());
+			$access->deletePage($page);
+		}
+
+		if($options['clearParents'] && !$halt) {
+			// delete entirely from pages_parents table
+			$this->pages->parents()->delete($page);
+		}
+
+		if($options['clearSortfield'] && !$halt) {
+			$this->pages->sortfields()->delete($page);
+		}
+		
+		if(count($errors) || $halt) {
+			foreach($errors as $error) {
+				$this->error($error);
+			}
+			return false;
+		}
+
+		return true;
+	}
+	
+	/**
+	 * Prepare options for Pages::new(), Pages::newPage() 
+	 * 
+	 * Converts given array, selector string, template name, object or int to array of options. 
+	 * 
+	 * #pw-internal
+	 *
+	 * @param array|string|int $options
+	 * @return array
+	 * @since 3.0.191
+	 *
+	 */
+	public function newPageOptions($options) {
+		
+		if(empty($options)) return array(); 
+
+		$template = null; /** @var Template|null $template */
+		$parent = null;
+		$class = '';
+
+		if(is_array($options)) {
+			// ok
+		} else if(is_string($options)) {
+			if(strpos($options, '=') !== false) {
+				$selectors = new Selectors($options);
+				$this->wire($selectors);
+				$options = array();
+				foreach($selectors as $selector) {
+					$options[$selector->field()] = $selector->value;
+				}
+			} else if(strpos($options, '/') === 0) {
+				$options = array('path' => $options);
+			} else {
+				$options = array('template' => $options);
+			}
+		} else if(is_object($options)) {
+			$options = $options instanceof Template ? array('template' => $options) : array();
+		} else if(is_int($options)) {
+			$template = $this->wire()->templates->get($options);
+			$options = $template ? array('template' => $template) : array();
+		} else {
+			$options = array();
+		}
+
+		// only use property 'parent' rather than 'parent_id'
+		if(!empty($options['parent_id']) && empty($options['parent'])) {
+			$options['parent'] = $options['parent_id'];
+			unset($options['parent_id']);
+		}
+
+		// only use property 'template' rather than 'templates_id'
+		if(!empty($options['templates_id']) && empty($options['template'])) {
+			$options['template'] = $options['templates_id'];
+			unset($options['templates_id']);
+		}
+
+		// page class (pageClass)
+		if(!empty($options['pageClass'])) {
+			// ok
+			$class = $options['pageClass'];
+			unset($options['pageClass']); 
+		} else if(!empty($options['class']) && !$this->wire()->fields->get('class')) {
+			// alias for pageClass, so long as there is not a field named 'class'
+			$class = $options['class'];
+			unset($options['class']);
+		}
+
+		// identify requested template
+		if(isset($options['template'])) {
+			$template = $options['template'];
+			if(!is_object($template)) {
+				$template = empty($template) ? null : $this->wire()->templates->get($template);
+			}
+			unset($options['template']);
+		}
+
+		// convert parent path to parent page object
+		if(!empty($options['parent'])) {
+			if(is_object($options['parent'])) {
+				$parent = $options['parent'];
+			} else if(ctype_digit("$options[parent]")) {
+				$parent = (int) $options['parent'];
+			} else {
+				$parent = $this->pages->getByPath($options['parent']);
+				if(!$parent->id) $parent = null;
+			}
+			unset($options['parent']);
+		}
+
+		// name and parent can be detected from path, when specified
+		if(!empty($options['path'])) {
+			$path = trim($options['path'], '/');
+			if(strpos($path, '/') === false) $path = "/$path";
+			$parts = explode('/', $path); // note index[0] is blank
+			$name = array_pop($parts);
+			if(empty($options['name']) && !empty($name)) {
+				// detect name from path
+				$options['name'] = $name;
+			}
+			if(empty($parent) && !$this->pages->loader()->isLoading()) {
+				// detect parent from path
+				$parentPath = count($parts) ? implode('/', $parts) : '/';
+				$parent = $this->pages->getByPath($parentPath);
+				if(!$parent->id) $parent = null;
+			}
+			unset($options['path']);
+		}
+
+		// detect template from parent (when possible)
+		if(!$template && !empty($parent) && empty($options['id']) && !$this->pages->loader()->isLoading()) {
+			$parent = is_object($parent) ? $parent : $this->pages->get($parent);
+			if($parent->id) {
+				if(count($parent->template->childTemplates) === 1) {
+					$template = $parent->template->childTemplates()->first();
+				}
+			} else {
+				$parent = null;
+			}
+		}
+
+		// detect parent from template (when possible)
+		if($template && empty($parent) && empty($options['id']) && !$this->pages->loader()->isLoading()) { 
+			if(count($template->parentTemplates) === 1) {
+				$parentTemplates = $template->parentTemplates();
+				if($parentTemplates->count()) {
+					$numParents = $this->pages->count("template=$parentTemplates, include=all");
+					if($numParents === 1) {
+						$parent = $this->pages->get("template=$parentTemplates");
+						if(!$parent->id) $parent = null;
+					}
+				}
+			}	
+		}
+	
+		// detect class from template
+		if(empty($class) && $template) $class = $template->getPageClass();
+
+		if($parent) $options['parent'] = $parent;
+		if($template) $options['template'] = $template;
+		if($class) $options['pageClass'] = $class;
+		
+		if(isset($options['id'])) {
+			if(ctype_digit("$options[id]") && (int) $options['id'] > 0) {
+				$options['id'] = (int) $options['id'];
+				if($parent && "$options[id]" === "$parent") unset($options['parent']);
+			} else if(((int) $options['id']) === -1) {
+				$options['id'] = (int) $options['id']; // special case allowed for access control tests
+			} else {
+				unset($options['id']);
+			}
+		}
+
+		return $options;
+	}
+
+	/**
 	 * Hook after Fieldtype::sleepValue to remove MB4 characters when present and applicable
 	 * 
 	 * This hook is only used if $config->dbStripMB4 is true and $config->dbEngine is not “utf8mb4”. 
@@ -1569,7 +1898,7 @@ class PagesEditor extends Wire {
 	 * @param HookEvent $event
 	 * 
 	 */
-	protected function hookFieldtypeSleepValueStripMB4(HookEvent $event) {
-		$event->return = $this->wire('sanitizer')->removeMB4($event->return); 
+	public function hookFieldtypeSleepValueStripMB4(HookEvent $event) {
+		$event->return = $this->wire()->sanitizer->removeMB4($event->return); 
 	}
 }

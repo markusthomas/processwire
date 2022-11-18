@@ -18,13 +18,14 @@
  * 
  * #pw-body
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  * 
  * @property LanguageTabs|null $tabs Current LanguageTabs module instance, if installed #pw-internal
  * @property Language $default Get default language
  * @property Language $getDefault Get default language (alias of $default)
  * @property LanguageSupport $support Instance of LanguageSupport module #pw-internal
+ * @property LanguageSupportPageNames|false $pageNames Instance of LanguageSupportPageNames module or false if not installed 3.0.186+ #pw-internal
  * 
  * @method added(Page $language) Hook called when Language is added #pw-hooker
  * @method deleted(Page $language) Hook called when Language is deleted #pw-hooker
@@ -98,6 +99,16 @@ class Languages extends PagesType {
 	protected $editableCache = array();
 
 	/**
+	 * LanguageSupportPageNames module instance or boolean install state
+	 * 
+	 * Populated as a cache by the pageNames() or hasPageNames() methods
+	 * 
+	 * @var LanguageSupportPageNames|null|bool
+	 * 
+	 */
+	protected $pageNames = null;
+
+	/**
 	 * Construct
 	 *
 	 * @param ProcessWire $wire
@@ -107,7 +118,7 @@ class Languages extends PagesType {
 	 */
 	public function __construct(ProcessWire $wire, $templates = array(), $parents = array()) {
 		parent::__construct($wire, $templates, $parents);
-		$this->wire('database')->addHookAfter('unknownColumnError', $this, 'hookUnknownColumnError');
+		$this->wire()->database->addHookAfter('unknownColumnError', $this, 'hookUnknownColumnError');
 	}
 
 	/**
@@ -138,7 +149,9 @@ class Languages extends PagesType {
 	 * 
 	 */
 	public function getPageClass() {
-		return 'Language';
+		if($this->pageClass) return $this->pageClass;
+		$this->pageClass = class_exists(__NAMESPACE__ . "\\LanguagePage") ? 'LanguagePage' : 'Language';
+		return $this->pageClass;
 	}
 
 	/**
@@ -238,6 +251,7 @@ class Languages extends PagesType {
 	 * @return PageArray
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		if($this->languages && count($this->languages)) return $this->languages; 
 		$languages = $this->wire('pages')->newPageArray();
@@ -345,16 +359,16 @@ class Languages extends PagesType {
 		if(is_int($language)) {
 			$language = $this->get($language);
 		} else if(is_string($language)) {
-			$language = $this->get($this->wire('sanitizer')->pageNameUTF8($language));	
+			$language = $this->get($this->wire()->sanitizer->pageNameUTF8($language));	
 		} 
 		if(!$language instanceof Language || !$language->id) throw new WireException("Unknown language");
-		$user = $this->wire('user');
+		$user = $this->wire()->user;
 		$this->savedLanguage2 = null;
 		if($user->language && $user->language->id) {
 			if($language->id == $user->language->id) return false; // no change necessary
 			$this->savedLanguage2 = $user->language;
 		}
-		$user->language = $language;
+		$user->setQuietly('language', $language);
 		return true;
 	}
 
@@ -366,7 +380,7 @@ class Languages extends PagesType {
 	 * - If you call with no arguments, it returns the current user language, same as `$user->language`, but using this
 	 *   method may be preferable in some contexts, depending on how your IDE understands API calls. 
 	 * 
-	 * @param string $name Specify language name (or ID) to get a specific language, or omit to get current language
+	 * @param string|int $name Specify language name (or ID) to get a specific language, or omit to get current language
 	 * @return Language|NullPage|null
 	 * @since 3.0.127 
 	 * 
@@ -384,10 +398,10 @@ class Languages extends PagesType {
 	 * 
 	 */
 	public function unsetLanguage() {
-		$user = $this->wire('user');
+		$user = $this->wire()->user;
 		if(!$this->savedLanguage2) return false;
 		if($user->language && $user->language->id == $this->savedLanguage2->id) return false;
-		$user->language = $this->savedLanguage2;
+		$user->setQuietly('language', $this->savedLanguage2);
 		return true;
 	}
 	
@@ -603,6 +617,46 @@ class Languages extends PagesType {
 	}
 
 	/**
+	 * Get LanguageSupportPageNames module if installed, false if not
+	 * 
+	 * @return LanguageSupportPageNames|false
+	 * @since 3.0.186
+	 * 
+	 */
+	public function pageNames() {
+		// null when not known, true when previously detected as installed but instance not yet loaded
+		if($this->pageNames === null || $this->pageNames === true) {
+			$modules = $this->wire()->modules;
+			if($modules->isInstalled('LanguageSupportPageNames')) {
+				// installed: load instance
+				$this->pageNames = $modules->getModule('LanguageSupportPageNames');
+			} else {
+				// not installed
+				$this->pageNames = false;
+			}
+		}
+		// object instance or boolean false
+		return $this->pageNames;
+	}
+
+	/**
+	 * Is LanguageSupportPageNames installed?
+	 * 
+	 * @return bool
+	 * @since 3.0.186
+	 * 
+	 */
+	public function hasPageNames() {
+		// if previously identified as installed or instance loaded, return true
+		if($this->pageNames) return true;
+		// if previously identified as NOT installed, return false
+		if($this->pageNames=== false) return false;
+		// populate with installed status boolean and return it
+		$this->pageNames = $this->wire()->modules->isInstalled('LanguageSupportPageNames');
+		return $this->pageNames;
+	}
+
+	/**
 	 * Get all language specific page-edit permissions, or individually one of them
 	 * 
 	 * #pw-internal
@@ -745,10 +799,55 @@ class Languages extends PagesType {
 	 * 
 	 */
 	public function __get($key) {
-		if($key == 'tabs') return $this->wire('modules')->get('LanguageSupport')->getLanguageTabs();
-		if($key == 'default') return $this->getDefault();
-		if($key == 'support') return $this->wire('modules')->get('LanguageSupport');
+		if($key === 'tabs') {
+			$ls = $this->wire()->modules->get('LanguageSupport'); /** @var LanguageSupport $ls */
+			return $ls->getLanguageTabs();
+		} else if($key === 'default') {
+			return $this->getDefault();
+		} else if($key === 'support') {
+			return $this->wire()->modules->get('LanguageSupport');
+		} else if($key === 'pageNames') {
+			return $this->pageNames();
+		} else if($key === 'hasPageNames') {
+			return $this->hasPageNames();
+		}
 		return parent::__get($key);
+	}
+	
+	/**
+	 * Get language or property
+	 * 
+	 * (method repeated here for return value documentation purposes only)
+	 * 
+	 * #pw-internal
+	 *
+	 * @param int|string $key
+	 * @return Language|NullPage|null|mixed
+	 *
+	 */
+	public function get($key) {
+		return parent::get($key);
+	}
+	
+	/**
+	 * Import a language translations file
+	 *
+	 * @param Language|string $language
+	 * @param string $file Full path to .csv translations file
+	 *   The .csv file must be one generated by ProcessWire’s language translation tools. 
+	 * @param bool $quiet Specify true to suppress error/success notifications being generated (default=false)
+	 * @return bool|int Returns integer with number of translations imported or boolean false on error
+	 * @throws WireException
+	 * @since 3.0.181
+	 *
+	 */
+	public function importTranslationsFile($language, $file, $quiet = false) {
+		if(!wireInstanceOf($language, 'Language')) $language = $this->get($language);
+		if(!$language || !$language->id) throw new WireException("Unknown language");
+		$process = $this->wire()->modules->getModule('ProcessLanguage', array('noInit' => true)); /** @var ProcessLanguage $process */
+		if(!$this->wire()->files->exists($file)) throw new WireException("Language file does not exist: $file");
+		if(pathinfo($file, PATHINFO_EXTENSION) !== 'csv') throw new WireException("Language file does not have .csv extension");
+		return $process->processCSV($file, $language, array('quiet' => $quiet));
 	}
 
 	/**

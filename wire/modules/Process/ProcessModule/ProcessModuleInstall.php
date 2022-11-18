@@ -1,15 +1,22 @@
 <?php namespace ProcessWire;
 
 /**
- * Class ProcessModuleInstall
+ * Installation helper for ProcessModule
  * 
  * Provides methods for internative module installation for ProcessModule
+ * 
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
+ * https://processwire.com
  * 
  */
 
 class ProcessModuleInstall extends Wire {
-	
-	protected $tempDir = '';
+
+	/**
+	 * @var WireTempDir
+	 * 
+	 */
+	private $tempDir = null;
 
 	/**
 	 * Returns a temporary directory (path) for use by this object
@@ -29,16 +36,30 @@ class ProcessModuleInstall extends Wire {
 	 * This primarily checks that needed dirs are writable and ZipArchive is available.
 	 *
 	 * @param bool $notify Specify true to make it queue the relevant reason/error message if upload/download not supported. (default=false)
+	 * @param string $type One of 'upload' or 'download' or omit for general check
 	 * @return bool
 	 *
 	 */
-	public function canUploadDownload($notify = true) {
+	public function canUploadDownload($notify = true, $type = '') {
+		$config = $this->wire()->config;
+		if($type) {
+			$a = $config->moduleInstall;
+			$allow = is_array($a) && isset($a[$type]) ? $a[$type] : false;
+			if($allow === 'debug' && !$config->debug) $allow = false;
+			if(!$allow) {
+				if($notify) $this->error(
+					sprintf($this->_('Module install option “%s”'), $type) . ' - ' . 
+					$this->installDisabledLabel($type)
+				);
+				return false;
+			}
+		}
 		$can = true;
-		if(!is_writable($this->config->paths->cache)) {
+		if(!is_writable($config->paths->cache)) {
 			if($notify) $this->error($this->_('Make sure /site/assets/cache/ directory is writeable for PHP.'));
 			$can = false;
 		}
-		if(!is_writable($this->config->paths->siteModules)) {
+		if(!is_writable($config->paths->siteModules)) {
 			if($notify) $this->error($this->_('Make sure your site modules directory (/site/modules/) is writeable for PHP.'));
 			$can = false;
 		}
@@ -48,6 +69,40 @@ class ProcessModuleInstall extends Wire {
 		}
 
 		return $can;
+	}
+
+	/**
+	 * Module upload allowed? 
+	 * 
+	 * @param bool $notify
+	 * @return bool
+	 * 
+	 * 
+	 */
+	public function canInstallFromFileUpload($notify = true) {
+		return $this->canUploadDownload($notify, 'upload');
+	}
+
+	/**
+	 * Module download from URL allowed?
+	 *
+	 * @param bool $notify
+	 * @return bool
+	 *
+	 */
+	public function canInstallFromDownloadUrl($notify = true) {
+		return $this->canUploadDownload($notify, 'download');
+	}
+
+	/**
+	 * Module install/upgrade from directory allowed?
+	 *
+	 * @param bool $notify
+	 * @return bool
+	 *
+	 */
+	public function canInstallFromDirectory($notify = true) {
+		return $this->canUploadDownload($notify, 'directory');
 	}
 
 	/**
@@ -63,7 +118,8 @@ class ProcessModuleInstall extends Wire {
 		static $level = 0;
 		$level++;
 		$files = array();
-		if(!$path) $path = $this->wire('config')->paths->siteModules;
+		
+		if(!$path) $path = $this->wire()->config->paths->siteModules;
 		
 		// find the names of all existing module files, so we can defer to their dirs
 		// if a module is being installed that already exists
@@ -107,7 +163,8 @@ class ProcessModuleInstall extends Wire {
 		$moduleFiles1 = array(); // level1 module files (those in closest dir or subdir)
 		$moduleDirs = array(); // all module dirs found
 		$moduleDir = ''; // recommended name for module dir (returned by this method)
-		if(!$modulePath) $modulePath = $this->wire('config')->paths->siteModules;
+		
+		if(!$modulePath) $modulePath = $this->wire()->config->paths->siteModules;
 		$tempDir = $this->getTempDir();
 
 		foreach($files as $key => $f) {
@@ -221,26 +278,36 @@ class ProcessModuleInstall extends Wire {
 	/**
 	 * Unzip the module file to tempDir and then copy to destination directory
 	 *
-	 * @param string $file File to unzip
+	 * @param string $zipFile File to unzip
 	 * @param string $destinationDir Directory to copy completed files into. Optionally omit to determine automatically.
 	 * @return bool|string Returns destinationDir on success, false on failure
 	 * @throws WireException
 	 *
 	 */
-	public function unzipModule($file, $destinationDir = '') {
+	public function unzipModule($zipFile, $destinationDir = '') {
+		
+		$config = $this->wire()->config;
 
 		$success = false;
 		$tempDir = $this->getTempDir();
 		$mkdirDestination = false;
+		$fileTools = $this->wire()->files;
 
 		try {
-			$files = $this->wire('files')->unzip($file, $tempDir);
-			if(is_file($file)) $this->wire('files')->unlink($file, true);
-			foreach($files as $f) $this->message("Extracted: $f", Notice::debug); 
+			$files = $fileTools->unzip($zipFile, $tempDir);
+			if(is_file($zipFile)) $fileTools->unlink($zipFile, true);
+			$qty = count($files);
+			if($qty < 100 && $config->debug) {
+				foreach($files as $f) {
+					$this->message(sprintf($this->_('Extracted: %s'), $f));
+				}
+			} else {
+				$this->message(sprintf($this->_n('Extracted %d file', 'Extracted %d files', $qty), $qty));
+			}
 
 		} catch(\Exception $e) {
 			$this->error($e->getMessage());
-			if(is_file($file)) $this->wire('files')->unlink($file, true);
+			if(is_file($zipFile)) $fileTools->unlink($zipFile, true);
 			return false;
 		}
 
@@ -258,20 +325,20 @@ class ProcessModuleInstall extends Wire {
 			// destination dir already there, perhaps an older version of same module?
 			// create a backup of it
 			$hasBackup = $this->backupDir($destinationDir);
-			if($hasBackup) $this->wire('files')->mkdir($destinationDir, true); 
+			if($hasBackup) $fileTools->mkdir($destinationDir, true); 
 		} else {
-			if($this->wire('files')->mkdir($destinationDir, true)) $mkdirDestination = true;
+			if($fileTools->mkdir($destinationDir, true)) $mkdirDestination = true;
 			$hasBackup = false; 
 		}
 
 		// label to identify destinationDir in messages and errors
-		$dirLabel = str_replace($this->config->paths->root, '/', $destinationDir);
+		$dirLabel = str_replace($config->paths->root, '/', $destinationDir);
 
 		if(is_dir($destinationDir)) {
 			$from = $tempDir . $extractedDir;
-			if($this->wire('files')->copy($from, $destinationDir)) {
+			if($fileTools->copy($from, $destinationDir)) {
 				$this->message($this->_('Successfully copied files to new directory:') . ' ' . $dirLabel);
-				$this->wire('files')->chmod($destinationDir, true);
+				$fileTools->chmod($destinationDir, true);
 				$success = true;
 			} else {
 				$this->error($this->_('Unable to copy files to new directory:') . ' ' . $dirLabel);
@@ -283,53 +350,72 @@ class ProcessModuleInstall extends Wire {
 
 		if(!$success) {
 			$this->error($this->_('Unable to copy module files:') . ' ' . $dirLabel);
-			if($mkdirDestination && !$this->wire('files')->rmdir($destinationDir, true)) {
+			if($mkdirDestination && !$fileTools->rmdir($destinationDir, true)) {
 				$this->error($this->_('Could not delete failed module dir:') . ' ' . $destinationDir, Notice::log);
 			}
 		}
 
 		return $success ? $destinationDir : false;
 	}
-	
+
+	/**
+	 * Create a backup of a module directory
+	 * 
+	 * @param string $moduleDir
+	 * @return bool
+	 * @throws WireException
+	 * 
+	 */
 	protected function backupDir($moduleDir) {
+		$files = $this->wire()->files;
+		$config = $this->wire()->config;
+		
 		$dir = rtrim($moduleDir, "/");
 		$name = basename($dir);
 		$parentDir = dirname($dir);
 		$backupDir = "$parentDir/.$name/";
-		if(is_dir($backupDir)) wireRmdir($backupDir, true); // if there's already an old backup copy, remove it
+		if(is_dir($backupDir)) $files->rmdir($backupDir, true); // if there's already an old backup copy, remove it
 		$success = false;
 		
 		if(is_link(rtrim($moduleDir, '/'))) {
 			// module directory is a symbolic link
 			// copy files from symlink dir to real backup dir
-			$success = $this->wire('files')->copy($moduleDir, $backupDir); 
+			$success = $files->copy($moduleDir, $backupDir); 
 			// remove symbolic link
 			unlink(rtrim($moduleDir, '/'));
-			$dir = str_replace($this->wire('config')->paths->root, '/', $moduleDir); 
+			$dir = str_replace($config->paths->root, '/', $moduleDir); 
 			$this->warning(sprintf(
 				$this->_('Please note that %s was a symbolic link and has been converted to a regular directory'), $dir
 			)); 
 		} else {
 			// module is a regular directory
 			// just rename it to become the new backup dir
-			if($this->wire('files')->rename($moduleDir, $backupDir)) $success = true; 
+			if($files->rename($moduleDir, $backupDir)) $success = true; 
 		}
 		
 		if($success) {
-			$this->message(sprintf($this->_('Backed up existing %s'), $name) . " => " . str_replace($this->wire('config')->paths->root, '/', $backupDir));
+			$this->message(sprintf($this->_('Backed up existing %s'), $name) . " => " . str_replace($config->paths->root, '/', $backupDir));
 			return true; 
 		} else {
 			return false;
 		}
 	}
-	
+
+	/**
+	 * Restore a module directory
+	 * 
+	 * @param string $moduleDir
+	 * @return bool
+	 * @throws WireException
+	 * 
+	 */
 	protected function restoreDir($moduleDir) {
 		$dir = rtrim($moduleDir, "/");
 		$name = basename($dir);
 		$parentDir = dirname($dir);
 		$backupDir = "$parentDir/.$name/";
 		if(is_dir($backupDir)) {
-			wireRmdir($moduleDir, true); // if there's already an old backup copy, remove it
+			$this->wire()->files->rmdir($moduleDir, true); // if there's already an old backup copy, remove it
 			if(rename($backupDir, $moduleDir)) { 
 				$this->message(sprintf($this->_('Restored backup of %s'), $name) . " => $moduleDir");
 			}
@@ -347,7 +433,7 @@ class ProcessModuleInstall extends Wire {
 	 */
 	public function uploadModule($inputName = 'upload_module', $destinationDir = '') {
 
-		if(!$this->canUploadDownload()) {
+		if(!$this->canInstallFromFileUpload()) {
 			$this->error($this->_('Unable to complete upload'));
 			return false;
 		}
@@ -381,16 +467,18 @@ class ProcessModuleInstall extends Wire {
 	/**
 	 * Given a URL to a ZIP file, download it, unzip it, and move to /site/modules/[ModuleName]
 	 *
-	 * @param $url
+	 * @param string $url Download URL
 	 * @param string $destinationDir Optional destination path for files (omit to auto-determine)
+	 * @param string $type Specify type of 'download' or 'directory'
 	 * @return bool|string Returns destinationDir on success, false on failure.
 	 *
 	 */
-	public function downloadModule($url, $destinationDir = '') {
-		
-		if(!$this->canUploadDownload()) {
-			$this->error($this->_('Unable to complete download'));
-			return false;
+	public function downloadModule($url, $destinationDir = '', $type = 'download') {
+
+		if($type === 'directory') {
+			if(!$this->canInstallFromDirectory()) return false;
+		} else {
+			if(!$this->canInstallFromDownloadUrl()) return false;
 		}
 
 		if(!preg_match('{^https?://}i', $url)) {
@@ -406,7 +494,7 @@ class ProcessModuleInstall extends Wire {
 
 		// download the zip file and save it in assets directory
 		$success = false;
-		$http = $this->wire(new WireHttp());
+		$http = $this->wire(new WireHttp()); /** @var WireHttp $http */
 
 		try {
 			$file = $http->download($url, $tempZIP); // throws exceptions on any error
@@ -419,12 +507,73 @@ class ProcessModuleInstall extends Wire {
 
 		} catch(\Exception $e) {
 			$this->error($e->getMessage());
-			$this->wire('files')->unlink($tempZIP);
+			$this->wire()->files->unlink($tempZIP);
 		}
 
 		return $success ? $destinationDir : false; 
 	}
-	
+
+	/**
+	 * Download module from URL
+	 *
+	 * @param string $url
+	 * @param string $destinationDir
+	 * @return bool|string
+	 * @since 3.0.162
+	 *
+	 */
+	public function downloadModuleFromUrl($url, $destinationDir = '') {
+		return $this->downloadModule($url, $destinationDir, 'download'); 
+	}
+
+	/**
+	 * Download module from directory 
+	 * 
+	 * @param string $url
+	 * @param string $destinationDir
+	 * @return bool|string
+	 * @since 3.0.162
+	 * 
+	 */
+	public function downloadModuleFromDirectory($url, $destinationDir = '') {
+		return $this->downloadModule($url, $destinationDir, 'directory');
+	}
+
+	/**
+	 * Return label to indicate option is disabled and how to enable it 
+	 * 
+	 * @param string $type
+	 * @return string
+	 * @since 3.0.162
+	 * 
+	 */
+	public function installDisabledLabel($type) {
+		$config = $this->wire()->config;
+		$a = $config->moduleInstall;
+		
+		if(!is_writable($config->paths->siteModules)) {
+			return
+				sprintf($this->_('Your %s path is currently not writable.'), $config->urls->siteModules) . ' ' .
+				$this->_('It must be made writable to ProcessWire before you can enable this module installation option.');
+		}
+
+		$debug = !empty($a[$type]) && $a[$type] === 'debug';
+		$opt1 = "`\$config->moduleInstall('$type', true);` " . $this->_('to enable always');
+		$opt2 = "`\$config->debug = true;` " . $this->_('temporarily');
+		$opt3 = "`\$config->moduleInstall('$type', 'debug');` " . $this->_('to enable in debug mode only');
+		$file = $config->urls->site . 'config.php';
+		$inst = $this->_('To enable, edit file %1$s and specify: %2$s …or… %3$s');
+		if($debug) {
+			return
+				$this->_('This install option is configured to be available only in debug mode.') . ' ' .
+				sprintf($inst, "$file", "\n$opt2", "\n$opt1");
+			
+		} else {
+			return
+				$this->_('This install option is currently disabled.') . ' ' . 
+				sprintf($inst, "$file", "\n$opt1", "\n$opt3");
+		}
+	}
 
 }
 

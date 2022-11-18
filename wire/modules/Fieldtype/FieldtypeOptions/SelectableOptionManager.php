@@ -6,7 +6,7 @@
  * Handles management of the fieldtype_options table and related field_[name] table
  * to assist FieldtypeOptions module. 
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -28,6 +28,14 @@ class SelectableOptionManager extends Wire {
 	protected $useLanguages = false;
 
 	/**
+	 * Cache of loaded options
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $optionsCache = array();
+
+	/**
 	 * Options removed that have not yet been deleted
 	 * 
 	 * Populated after a call to $this->setOptions() with the $allowDelete argument false.
@@ -37,11 +45,12 @@ class SelectableOptionManager extends Wire {
 	 */
 	protected $removedOptionIDs = array();
 	
-	public function __construct() {
+	public function wired() {
 		if($this->wire('modules')->isInstalled('LanguageSupportFields')) {
-			$this->useLanguages = true; 
+			$this->useLanguages = true;
 			$this->addHookAfter('Languages::updated', $this, 'updateLanguages');
 		}
+		parent::wired();
 	}
 
 	/**
@@ -92,7 +101,13 @@ class SelectableOptionManager extends Wire {
 	 *
 	 */
 	public function getOptions(Field $field, array $filters = array()) {
-
+		
+		$hasFilters = count($filters) > 0;
+		
+		if(isset($this->optionsCache[$field->id]) && !$hasFilters) {
+			return $this->optionsCache[$field->id];
+		}
+		
 		$defaults = array(
 			'id' => array(),
 			'title' => array(),
@@ -175,6 +190,8 @@ class SelectableOptionManager extends Wire {
 		}
 		
 		$options->resetTrackChanges();
+		
+		if(!$hasFilters) $this->optionsCache[$field->id] = $options; 
 
 		return $options;
 	}
@@ -198,7 +215,7 @@ class SelectableOptionManager extends Wire {
 	
 		/** @var DatabaseQuerySelect $query */
 		$query = $this->wire(new DatabaseQuerySelect());
-		$query->select('*'); 
+		$query->select(self::optionsTable . '.*'); 
 		$query->from(self::optionsTable); 
 		$query->where("fields_id=:fields_id"); 
 		$query->bindValue(':fields_id', $field->id); 
@@ -354,8 +371,8 @@ class SelectableOptionManager extends Wire {
 		$out = '';
 		
 		foreach($options as $option) {
-			$title = trim($option->get("title$language"));
-			$value = trim($option->get("value$language"));
+			$title = trim((string) $option->get("title$language"));
+			$value = trim((string) $option->get("value$language"));
 			$titleLength = strlen($title);
 			$valueLength = strlen($value);
 			if(!$titleLength && !$valueLength) continue;
@@ -543,6 +560,8 @@ class SelectableOptionManager extends Wire {
 	 *
 	 */
 	public function updateOptions(Field $field, $options) {
+		
+		unset($this->optionsCache[$field->id]); 
 
 		$database = $this->wire('database');
 		$sql = "UPDATE " . self::optionsTable . " SET sort=:sort, title=:title, `value`=:value ";
@@ -596,6 +615,7 @@ class SelectableOptionManager extends Wire {
 	 *
 	 */
 	public function deleteOptions(Field $field, $options) {
+		unset($this->optionsCache[$field->id]); 
 		$ids = array();
 		foreach($options as $option) {
 			if(!$option instanceof SelectableOption) continue;
@@ -616,6 +636,7 @@ class SelectableOptionManager extends Wire {
 	 */
 	public function deleteOptionsByID(Field $field, array $ids) {
 
+		unset($this->optionsCache[$field->id]); 
 		$database = $this->wire('database');
 		$table = $database->escapeTable($field->getTable());
 		$cleanIDs = array();
@@ -649,6 +670,26 @@ class SelectableOptionManager extends Wire {
 	}
 
 	/**
+	 * Delete all options for given field
+	 * 
+	 * @param Field $field
+	 * @return int
+	 * @throws WireException
+	 * 
+	 */
+	public function deleteAllOptionsForField(Field $field) {
+		$database = $this->wire()->database;
+		$table = self::optionsTable;
+		$sql = "DELETE FROM `$table` WHERE fields_id=:fields_id";
+		$query = $database->prepare($sql);
+		$query->bindValue(':fields_id', $field->id, \PDO::PARAM_INT);
+		$query->execute();
+		$cnt = $query->rowCount();
+		$this->message("Deleted $cnt row(s) from table $table", Notice::debug);
+		return $cnt;
+	}
+
+	/**
 	 * Add the given option titles for $field
 	 *
 	 * @param Field $field
@@ -663,6 +704,8 @@ class SelectableOptionManager extends Wire {
 		
 		// options that have pre-assigned IDs
 		$optionsByID = array();
+
+		unset($this->optionsCache[$field->id]);
 
 		// determine if any added options already have IDs
 		foreach($options as $option) {
@@ -732,77 +775,187 @@ class SelectableOptionManager extends Wire {
 	 * 
 	 */
 	public function updateLanguages(HookEvent $event = null) {
-		if($event) {} // ignore
-		if(!$this->useLanguages) return;
 		
-		$database = $this->wire('database'); 
-		$table = self::optionsTable;
-		$languages = $this->wire('languages');
-		$maxLen = $database->getMaxIndexLength();
-		if(strtolower($this->wire('config')->dbCharset) == 'utf8mb4') $maxLen -= 20;
-	
-		// check for added languages
-		foreach($languages as $language) {
-			if($language->isDefault()) continue;
-			$titleCol = "title" . (int) $language->id;
-			$valueCol = "value" . (int) $language->id;
-			$query = $database->prepare("SHOW COLUMNS FROM $table LIKE '$valueCol'");
-			$query->execute();
-			if($query->rowCount() > 0) continue;
-			$this->message("FieldtypeOptions: Add language $language->name (id=$language)", Notice::debug); 
-
-			try {
-				$database->exec("ALTER TABLE $table ADD $titleCol TEXT");
-				$database->exec("ALTER TABLE $table ADD UNIQUE $titleCol ($titleCol($maxLen), fields_id)");
-			} catch(\Exception $e) {
-				$this->error($e->getMessage());
-			}
-			try {
-				$database->exec("ALTER TABLE $table ADD $valueCol VARCHAR($maxLen)");
-				$database->exec("ALTER TABLE $table ADD INDEX $valueCol ($valueCol($maxLen), fields_id)");
-				$database->exec("ALTER TABLE $table ADD FULLTEXT {$titleCol}_$valueCol ($titleCol, $valueCol)");
-			} catch(\Exception $e) {
-				$this->error($e->getMessage());
-			}
+		if(!$this->useLanguages || !$this->wire()->languages) return;
+		
+		if($event) {
+			$language = $event->arguments(0); /** @var Language $language */
+			$updateType = $event->arguments(1); /** @var string $updateType one of 'added' or 'deleted' */
+		} else {
+			$language = null;
+			$updateType = '';
 		}
 		
-		// check for deleted languages
-		$query = $database->prepare("SHOW COLUMNS FROM $table LIKE 'title%'");
-		$query->execute();
-		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
-			$name = $row['Field'];
-			if($name === 'title') continue; 
-			$id = (int) str_replace('title', '', $name); 	
-			$language = $languages->get($id); 
-			if($language && $language->id) continue; 
-			$titleCol = "title$id";
-			$valueCol = "value$id";
-			$this->message("FieldtypeOptions: Delete language $id", Notice::debug); 
+		if($updateType === 'deleted') {
+			$sqls = $this->checkLanguagesDeleted($language);
+		} else if($updateType === 'added') {
+			$sqls = $this->checkLanguagesAdded($language);
+		} else {
+			$sqls = array_merge($this->checkLanguagesAdded(), $this->checkLanguagesDeleted());
+		}
+
+		$database = $this->wire()->database;
+		
+		foreach($sqls as $sql) {
 			try {
-				$database->exec("ALTER TABLE $table DROP INDEX $titleCol");
-				$database->exec("ALTER TABLE $table DROP INDEX $valueCol");
-				$database->exec("ALTER TABLE $table DROP INDEX {$titleCol}_$valueCol");
-				$database->exec("ALTER TABLE $table DROP $titleCol");
-				$database->exec("ALTER TABLE $table DROP $valueCol");
+				$database->exec($sql);
 			} catch(\Exception $e) {
-				$this->error($e->getMessage());
+				$this->error("$sql -- " . $e->getMessage());
 			}
 		}
 	}
-	
+
+	/**
+	 * Check for added languages
+	 * 
+	 * @param Language|null $languageAdded
+	 * @return array SQL statements to add language when appropriate
+	 * 
+	 */
+	protected function checkLanguagesAdded($languageAdded = null) {
+		
+		$database = $this->wire()->database;
+		$table = self::optionsTable;
+		$maxLen = $database->getMaxIndexLength();
+		$sqls = array();
+		$languages = $languageAdded ? array($languageAdded) : $this->wire()->languages;
+		
+		if(strtolower($this->wire()->config->dbCharset) == 'utf8mb4') $maxLen -= 20;
+		
+		foreach($languages as $language) {
+			/** @var Language $language */
+			if($language->isDefault()) continue;
+			$titleCol = "title" . (int) $language->id;
+			$valueCol = "value" . (int) $language->id;
+			if($database->columnExists($table, $valueCol)) continue;
+			$this->message("FieldtypeOptions: Add language $language->name (id=$language)", Notice::debug);
+			$sqls[] = "ALTER TABLE $table ADD $titleCol TEXT";
+			$sqls[] = "ALTER TABLE $table ADD UNIQUE $titleCol ($titleCol($maxLen), fields_id)";
+			$sqls[] = "ALTER TABLE $table ADD $valueCol VARCHAR($maxLen)";
+			$sqls[] = "ALTER TABLE $table ADD INDEX $valueCol ($valueCol($maxLen), fields_id)";
+			$sqls[] = "CREATE FULLTEXT INDEX {$titleCol}_ft ON $table($titleCol)";
+			$sqls[] = "CREATE FULLTEXT INDEX {$valueCol}_ft ON $table($valueCol)";
+		}
+		
+		return $sqls;
+	}
+
+	/**
+	 * Check for deleted languages
+	 * 
+	 * @param Language|null $languageDeleted
+	 * @return array SQL statements to delete language when appropriate
+	 * 
+	 */
+	protected function checkLanguagesDeleted($languageDeleted = null) {
+		
+		$database = $this->wire()->database;
+		$table = self::optionsTable;
+		$languages = $this->wire()->languages;
+		$indexes = $database->getIndexes($table, true);
+		
+		$query = $database->prepare("SHOW COLUMNS FROM $table LIKE 'title%'");
+		$query->execute();
+		$rows = array();
+		$sqls = array();
+
+		while($row = $query->fetch(\PDO::FETCH_ASSOC)) $rows[] = $row;
+		$query->closeCursor();
+
+		foreach($rows as $row) {
+			$name = $row['Field'];
+			if($name === 'title') continue;
+			$id = (int) str_replace('title', '', $name);
+			if($languageDeleted) {
+				// language specified and if it matches column name then allow it
+				if($languageDeleted->id !== $id) continue;
+			} else {
+				// check if language exists and if yes then skip it 
+				$language = $languages->get($id);
+				if($language && $language->id) continue;
+			}
+			$this->message("FieldtypeOptions: Delete language $id", Notice::debug);
+			
+			$titleCol = "title$id";
+			$valueCol = "value$id";
+		
+			// Drop unique index: title+fields_id
+			if(isset($indexes[$titleCol])) $sqls[] = "ALTER TABLE $table DROP INDEX $titleCol";
+			if(isset($indexes[$valueCol])) $sqls[] = "ALTER TABLE $table DROP INDEX $valueCol";
+		
+			// Drop fulltext index
+			if(isset($indexes[$titleCol . '_ft'])) $sqls[] = "ALTER TABLE $table DROP INDEX {$titleCol}_ft";
+			if(isset($indexes[$valueCol . '_ft'])) $sqls[] = "ALTER TABLE $table DROP INDEX {$valueCol}_ft";
+			
+			// Drop older style combined index if present	
+			if(isset($indexes["{$titleCol}_$valueCol"])) $sqls[] = "ALTER TABLE $table DROP INDEX {$titleCol}_$valueCol"; 
+		
+			// drop column
+			$sqls[] = "ALTER TABLE $table DROP $titleCol";
+			$sqls[] = "ALTER TABLE $table DROP $valueCol";
+		}
+		
+		return $sqls;
+	}
+
+	/**
+	 * Upgrade fieldtype_options table
+	 * 
+	 * @param string $fromVersion
+	 * @param string $toVersion
+	 * @throws WireException
+	 * 
+	 */
+	public function upgrade($fromVersion, $toVersion) {
+		
+		if($fromVersion && $toVersion) {} // ignore
+		
+		$database = $this->wire()->database;
+		$table = self::optionsTable;
+		
+		if(!$database->tableExists($table)) return;
+
+		$indexes = $database->getIndexes($table, true);
+		
+		if(isset($indexes['title_value'])) {
+			// removed combined title+value indexes created prior to 3.0.182
+			// and replace with separate fulltext indexes for title and value
+			foreach($indexes as $name => $info) {
+				if(strpos($name, 'title') !== 0) continue;
+				if(!strpos($name, '_value')) continue;
+				// i.e. title_value or title123_value123
+				$database->exec("ALTER TABLE $table DROP INDEX `$name`");
+				$this->message("Dropped index $table.$name", Notice::debug);
+				foreach($info['columns'] as $col) {
+					try {
+						$sql = "CREATE FULLTEXT INDEX {$col}_ft ON $table($col)";
+						$database->exec($sql);
+						$this->message("Added fulltext index for $table.$col", Notice::debug);
+					} catch(\Exception $e) {
+						$this->error("$sql -- " . $e->getMessage());
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Install 
+	 * 
+	 */
 	public function install() {
 
-		$database = $this->wire('database'); 
+		$database = $this->wire()->database; 
 		$maxLen = $database->getMaxIndexLength();
-		$query = $database->prepare("SHOW TABLES LIKE '" . self::optionsTable . "'"); 
-		$query->execute();
 		
-		if($query->rowCount() == 0) {
-			$engine = $this->wire('config')->dbEngine;
-			$charset = $this->wire('config')->dbCharset;
+		if(!$database->tableExists(self::optionsTable)) {
+			$config = $this->wire()->config;
+			$engine = $config->dbEngine;
+			$charset = $config->dbCharset;
+			$table = self::optionsTable;
 			if(strtolower($charset) == 'utf8mb4') $maxLen -= 20;
 			$sql =
-				"CREATE TABLE " . self::optionsTable . " (" .
+				"CREATE TABLE $table (" .
 				"fields_id INT UNSIGNED NOT NULL, " .
 				"option_id INT UNSIGNED NOT NULL, " .
 				"`title` TEXT, " .
@@ -811,18 +964,27 @@ class SelectableOptionManager extends Wire {
 				"PRIMARY KEY (fields_id, option_id), " .
 				"UNIQUE title (title($maxLen), fields_id), " .
 				"INDEX `value` (`value`($maxLen), fields_id), " .
-				"INDEX sort (sort, fields_id), " .
-				"FULLTEXT title_value (`title`, `value`)" .
+				"INDEX sort (sort, fields_id) " .
 				") ENGINE=$engine DEFAULT CHARSET=$charset";
 			$database->exec($sql);
+			try {
+				$database->exec("CREATE FULLTEXT INDEX title_ft ON $table(`title`)");
+				$database->exec("CREATE FULLTEXT INDEX value_ft ON $table(`value`)");
+			} catch(\Exception $e) {
+				$this->error($e->getMessage());
+			}
 		}
 		
 		if($this->useLanguages) $this->updateLanguages();
 	}
 
+	/**
+	 * Uninstall
+	 *
+	 */
 	public function uninstall() {
 		try {
-			$this->wire('database')->exec("DROP TABLE " . self::optionsTable);
+			$this->wire()->database->exec("DROP TABLE " . self::optionsTable);
 		} catch(\Exception $e) {
 			$this->warning($e->getMessage());
 		}

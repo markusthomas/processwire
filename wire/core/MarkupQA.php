@@ -17,7 +17,7 @@
  * 
  * Runtime errors are logged to: /site/assets/logs/markup-qa-errors.txt
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  * 
  */ 
@@ -351,10 +351,12 @@ class MarkupQA extends Wire {
 		if(!preg_match_all($re, $value, $matches)) return;
 		
 		$replacements = array();
-		$languages = $this->wire('languages');
+		$languages = $this->wire()->languages;
 		$debug = $this->debug();
+		$config = $this->wire()->config;
+		$pages = $this->wire()->pages;
 		
-		if($languages && !$this->wire('modules')->isInstalled('LanguageSupportPageNames')) $languages = null;
+		if($languages && !$languages->hasPageNames()) $languages = null;
 		
 		foreach($matches[3] as $key => $path) {
 			
@@ -370,7 +372,7 @@ class MarkupQA extends Wire {
 				// scheme and hostname present
 				/** @noinspection PhpUnusedLocalVariableInspection */
 				list($x, $host) = explode('//', $href);
-				if($host != $this->wire('config')->httpHost && !in_array($host, $this->wire('config')->httpHosts)) {
+				if($host != $config->httpHost && !in_array($host, $config->httpHosts)) {
 					$counts['external']++;
 					if($debug) $this->message("MarkupQA sleepLinks skipping because hostname: $host");
 					// external hostname, which we will skip over
@@ -409,23 +411,36 @@ class MarkupQA extends Wire {
 			}
 			if($ignored) continue;
 	
-			// get the page ID for the path
-			$pageID = $this->wire('pages')->getByPath($path, array(
-				'getID' => true,
+			// get the page for the path
+			$getByPathOptions = array(
 				'useLanguages' => $languages ? true : false,
+				'allowUrlSegments' => true,
 				'useHistory' => true
-			));
+			);
+			$page = $pages->getByPath($path, $getByPathOptions);
+			if(!$page->id) {
+				// if not found try again with non-urlSegment partial matching
+				$getByPathOptions['allowUrlSegments'] = false;
+				$page = $pages->getByPath($path, $getByPathOptions);
+			}
+			$pageID = $page->id;
 			
 			if($pageID) {
 				// resolved to a page
+				$urlSegments = $page->get('_urlSegments');
+				$urlSegmentStr = is_array($urlSegments) ? implode('/', $urlSegments) : '';
+				
 				if($languages) {
-					$page = $this->wire('pages')->get($pageID);
 					/** @var Language $language */
-					$language = $this->wire('modules')->get('LanguageSupportPageNames')->getPagePathLanguage($path, $page);
+					$language = $languages->pageNames()->getPagePathLanguage($path, $page);
 					$pwid = !$language || $language->isDefault() ? $pageID : "$pageID-$language";
 				} else {
 					$language = null;
 					$pwid = $pageID;
+				}
+				if($urlSegmentStr) {
+					// append url segment path to the pwid
+					$pwid .= "/$urlSegmentStr";
 				}
 				$replacements[$full] = "$start\tdata-pwid=$pwid$href$path$end";
 				$counts['internal']++;
@@ -472,22 +487,23 @@ class MarkupQA extends Wire {
 	 * a potential "/subdir/" that wouldn't be recognized as a page path.
 	 * 
 	 * @param $value
+	 * @return array Returns array of replacements that were made (3.0.184+)
 	 * 
 	 */
 	public function wakeupLinks(&$value) {
 
 		// if there's no data-pwid attribute present, then there's nothing to do here
-		if(strpos($value, 'data-pwid=') === false) return;
+		if(strpos($value, 'data-pwid=') === false) return array();
 		
 		$re = '!' . 
 			'(<a[^\t<>]*?)' . // 1:"start" which includes "<a" and everything up until data-pwid attribute
-			'\tdata-pwid=([-\d]+)' . // 2:"pwid" integer of page id ($pageID) referenced by the link
+			'\tdata-pwid=([-\d]+(?:/[-_./a-z0-9]+)?)' . // 2:"pwid" integer of page id ($pageID) referenced by the link (123-11/urlSegmentStr)
 			'([\t ]+href=(?:["\'](?:https?:)?//[^/"\'\s<>]+|["\']))' . // 3:"href" attribute and optional scheme+hostname
 			'([-_./a-z0-9]+)' . // 4:"path" in PW page name format
 			'([^<>]*>)' . // 5:"end" which includes everything else and closing ">", i.e. query string, other attrs, etc.
 			'!i';
 		
-		if(!preg_match_all($re, $value, $matches)) return;
+		if(!preg_match_all($re, $value, $matches)) return array();
 		
 		$replacements = array();
 		$languages = $this->wire('languages');
@@ -497,6 +513,12 @@ class MarkupQA extends Wire {
 		$debug = $this->debug();
 		
 		foreach($matches[2] as $key => $pwid) {
+			
+			if(strpos($pwid, '/')) {
+				list($pwid, $urlSegmentStr) = explode('/', $pwid, 2);
+			} else {
+				$urlSegmentStr = '';
+			}
 			
 			if(strpos($pwid, '-')) {
 				list($pageID, $languageID) = explode('-', $pwid);
@@ -521,6 +543,11 @@ class MarkupQA extends Wire {
 			$livePath = $this->wire('pages')->getPath($pageID, array(
 				'language' => $language
 			));
+			
+			if($urlSegmentStr) {
+				$livePath = rtrim($livePath, '/') . "/$urlSegmentStr";
+				if(substr($path, '-1') === '/') $livePath .= '/';
+			}
 			
 			if(strlen($rootURL) > 1) {
 				$livePath = rtrim($rootURL, '/') . $livePath;
@@ -547,7 +574,7 @@ class MarkupQA extends Wire {
 					// linked page is in trash, we won't update it but we'll produce a warning
 					$this->linkWarning("$path => $livePath (" . $this->_('it is in the trash') . ')');
 					continue;
-				} else if(strpos($livePath, $adminPath) !== false) {
+				} else if(strpos($livePath, $adminPath) === 0) {
 					// do not update paths that point in admin
 					$this->linkWarning("$path => $livePath (" . $this->_('points to the admin') . ')');
 					continue;
@@ -572,6 +599,8 @@ class MarkupQA extends Wire {
 		if(count($replacements)) {
 			$value = str_replace(array_keys($replacements), array_values($replacements), $value);
 		}
+		
+		return $replacements;
 	}
 
 	/**
@@ -708,7 +737,7 @@ class MarkupQA extends Wire {
 	 *
 	 */
 	public function checkImgTags(&$value, array $options = array()) {
-		if(strpos($value, '<img ') !== false && preg_match_all('{(<img [^>]+>)}', $value, $matches)) {
+		if(strpos($value, '<img ') !== false && preg_match_all('{(<' . 'img [^>]+>)}', $value, $matches)) {
 			foreach($matches[0] as $key => $img) {
 				$this->checkImgTag($value, $img, $options);
 			}
@@ -737,7 +766,7 @@ class MarkupQA extends Wire {
 		$options = array_merge($defaults, $options);
 		$replaceAlt = ''; // exact text to replace for blank alt attribute, i.e. alt=""
 		$src = '';
-		$user = $this->wire('user');
+		$user = $this->wire()->user;
 		$attrStrings = explode(' ', $img); // array of strings like "key=value"
 
 		if($this->verbose()) {
@@ -803,6 +832,35 @@ class MarkupQA extends Wire {
 				return;
 			}
 		}
+		
+		/*
+		 * @todo potential replacement for 'removeNoAccess' block above
+		 * Regarding: https://github.com/processwire/processwire-issues/issues/1548
+		 * 
+		// if(($pagefile->page->id != $this->page->id && !$user->hasPermission('page-view', $pagefile->page))
+		if($options['removeNoAccess']) {
+			// if the file resolves to another page that the user doesn't have access to view, 
+			// OR user doesn't have permission to view the field that $pagefile is in, remove image
+			$page = $pagefile->page;
+			$field = $pagefile->field;
+			$removeImage = false;
+			if(wireInstanceOf($page, 'RepeaterPage')) {
+				$page = $page->getForPageRoot();
+				$field = $page->getForFieldRoot();
+			}
+			if($page->id != $this->page->id && !$page->viewable(false)) {
+				$this->error("Image on page ($page->id) that user does not have view access to: $src");
+				$removeImage = true;
+			} else if($field && !$page->viewable($field)) {
+				$this->error("Image on page:field ($page->id:$field) that user does not have view access to: $src");
+				$removeImage = true;
+			}
+			if($removeImage) {
+				if($this->page->of()) $value = str_replace($img, '', $value);
+				return;
+			}
+		}
+		*/
 
 		if($options['replaceBlankAlt'] && $replaceAlt) {
 			// image has a blank alt tag, meaning, we will auto-populate it with current file description, 

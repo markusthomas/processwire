@@ -13,13 +13,14 @@
  * Please be sure to see the `Module` interface for full details on methods you can specify in a Process module. 
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  * 
  * This file is licensed under the MIT license
  * https://processwire.com/about/license/mit/
  * 
  * @method string|array execute()
+ * @method string|array executeUnknown() Called when urlSegment matches no execute[Method], only if implemented.
  * @method Process headline(string $headline)
  * @method Process browserTitle(string $title)
  * @method Process breadcrumb(string $href, string $label)
@@ -28,7 +29,7 @@
  * @method void upgrade($fromVersion, $toVersion)
  * @method Page installPage($name = '', $parent = null, $title = '', $template = 'admin', $extras = array()) #pw-internal
  * @method int uninstallPage() #pw-internal
- * @method string executeNavJSON(array $options = array()) #pw-internal @todo
+ * @method string|array executeNavJSON(array $options = array()) #pw-internal @todo
  * @method void ready()
  * @method void setConfigData(array $data)
  * @method void executed($methodName) Hook called after a method has been executed in the Process
@@ -60,7 +61,7 @@ abstract class Process extends WireData implements Module {
 			'version' => 1, 			// version number of module
 			'summary' => '', 			// one sentence summary of module
 			'href' => '', 				// URL to more information (optional)
-			'permanent' => true, 		// true if module is permanent and thus not uninstallable (3rd party modules should specify 'false')
+			'permanent' => false, 		// true if module is permanent and thus not uninstallable (3rd party modules should omit this)
 	 		'page' => array( 			// optionally install/uninstall a page for this process automatically
 	 			'name' => 'page-name', 	// name of page to create
 	 			'parent' => 'setup', 	// parent name (under admin) or omit or blank to assume admin root
@@ -88,6 +89,7 @@ abstract class Process extends WireData implements Module {
 										// It receives array with: wire (PW instance), user (User), page (Page), 
 										// info (moduleInfo array), method (requested method)
 										// It should return a true or false.
+		);
 	}
  	*/
 
@@ -113,7 +115,9 @@ abstract class Process extends WireData implements Module {
 	 * Construct
 	 * 
 	 */
-	public function __construct() { }
+	public function __construct() { 
+		parent::__construct();
+	}
 
 	/**
 	 * Per the Module interface, Initialize the Process, loading any related CSS or JS files
@@ -122,7 +126,7 @@ abstract class Process extends WireData implements Module {
 	 *
 	 */
 	public function init() { 
-		$this->wire('modules')->loadModuleFileAssets($this); 
+		$this->wire()->modules->loadModuleFileAssets($this); 
 	}
 
 	/**
@@ -256,7 +260,7 @@ abstract class Process extends WireData implements Module {
 				$label = $_href;
 			}
 		}
-		$this->wire('breadcrumbs')->add(new Breadcrumb($href, $label));
+		$this->wire()->breadcrumbs->add(new Breadcrumb($href, $label));
 		return $this;
 	}
 
@@ -272,7 +276,7 @@ abstract class Process extends WireData implements Module {
 	 *
 	 */
 	public function ___install() {
-		$info = $this->wire('modules')->getModuleInfoVerbose($this, array('noCache' => true)); 
+		$info = $this->wire()->modules->getModuleInfoVerbose($this, array('noCache' => true)); 
 		// if a 'page' property is provided in the moduleInfo, we will create a page and assign this process automatically
 		if(!empty($info['page'])) { // bool, array, or string
 			$defaults = array(
@@ -309,7 +313,7 @@ abstract class Process extends WireData implements Module {
 	 *
 	 */
 	public function ___uninstall() {
-		$info = $this->wire('modules')->getModuleInfoVerbose($this, array('noCache' => true));
+		$info = $this->wire()->modules->getModuleInfoVerbose($this, array('noCache' => true));
 		// if a 'page' property is provided in the moduleInfo, we will trash pages using this Process automatically
 		if(!empty($info['page'])) $this->uninstallPage();
 	}
@@ -355,30 +359,36 @@ abstract class Process extends WireData implements Module {
 	 *
 	 */
 	protected function ___installPage($name = '', $parent = null, $title = '', $template = 'admin', $extras = array()) {
-		$info = $this->wire('modules')->getModuleInfoVerbose($this);
-		$name = $this->wire('sanitizer')->pageName($name);
+		
+		$pages = $this->wire()->pages;
+		$config = $this->wire()->config;
+		$modules = $this->wire()->modules;
+		$sanitizer = $this->wire()->sanitizer;
+		
+		$info = $modules->getModuleInfoVerbose($this);
+		$name = $sanitizer->pageName($name);
 		if(!strlen($name)) $name = strtolower(preg_replace('/([A-Z])/', '-$1', str_replace('Process', '', $this->className()))); 
-		$adminPage = $this->wire('pages')->get($this->wire('config')->adminRootPageID); 
+		$adminPage = $pages->get($config->adminRootPageID); 
 		if($parent instanceof Page) {
 			// already have what we  need
 		} else if(ctype_digit("$parent")) {
-			$parent = $this->wire('pages')->get((int) $parent);
+			$parent = $pages->get((int) $parent);
 		} else if(strpos($parent, '/') !== false) {
-			$parent = $this->wire('pages')->get($parent);
+			$parent = $pages->get($parent);
 		} else if($parent) {
-			$parent = $adminPage->child("include=all, name=" . $this->wire('sanitizer')->pageName($parent));
+			$parent = $sanitizer->pageName($parent);
+			$parent = $adminPage->child("include=all, name=$parent");
 		}
 		if(!$parent || !$parent->id) $parent = $adminPage; // default
 		$page = $parent->child("include=all, name=$name"); // does it already exist?
 		if($page->id && "$page->process" == "$this") return $page; // return existing copy
-		$page = $this->wire('pages')->newPage();
-		$page->template = $template ? $template : 'admin';
+		$page = $pages->newPage($template ? $template : 'admin');
 		$page->name = $name; 
 		$page->parent = $parent; 
 		$page->process = $this;
 		$page->title = $title ? $title : $info['title'];
 		foreach($extras as $key => $value) $page->set($key, $value); 
-		$this->wire('pages')->save($page, array('adjustName' => true)); 
+		$pages->save($page, array('adjustName' => true)); 
 		if(!$page->id) throw new WireException("Unable to create page: $parent->path$name"); 
 		$this->message(sprintf($this->_('Created Page: %s'), $page->path)); 
 		return $page;
@@ -426,6 +436,11 @@ abstract class Process extends WireData implements Module {
 	 */
 	public function ___executeNavJSON(array $options = array()) {
 		
+		$sanitizer = $this->wire()->sanitizer;
+		$modules = $this->wire()->modules;
+		$config = $this->wire()->config;
+		$page = $this->wire()->page;
+		
 		$defaults = array(
 			'items' => array(),
 			'itemLabel' => 'name', 
@@ -437,17 +452,17 @@ abstract class Process extends WireData implements Module {
 			'iconKey' => 'icon', // property/field containing icon, when applicable
 			'icon' => '', // default icon to use for items
 			'classKey' => '_class', // property to pull additional class names from. Example class: "separator" or "highlight"
+			'labelClassKey' => '_labelClass', // property to pull class for element to wrap label
 			'sort' => true, // automatically sort items A-Z?
 			'getArray' => false, // makes this method return an array rather than JSON
-			);
+		);
 		
 		$options = array_merge($defaults, $options); 
-		$moduleInfo = $this->modules->getModuleInfo($this); 
+		$moduleInfo = $modules->getModuleInfo($this); 
 		if(empty($moduleInfo['useNavJSON'])) {
 			throw new Wire404Exception('No JSON nav available', Wire404Exception::codeSecondary);
 		}
-		
-		$page = $this->wire('page');
+
 		$data = array(
 			'url' => $page->url,
 			'label' => $this->_((string) $page->get('title|name')),
@@ -468,28 +483,40 @@ abstract class Process extends WireData implements Module {
 				$id = $item->id;
 				$name = $item->name; 
 				$label = (string) $item->{$options['itemLabel']};
-				$icon = str_replace(array('icon-', 'fa-'),'', $item->{$options['iconKey']});
+				$icon = str_replace(array('icon-', 'fa-'),'', (string) $item->{$options['iconKey']});
 				$class = $item->{$options['classKey']};
 			} else if(is_array($item)) {
 				$id = isset($item['id']) ? $item['id'] : '';
 				$name = isset($item['name']) ? $item['name'] : '';
 				$label = isset($item[$options['itemLabel']]) ? $item[$options['itemLabel']] : '';
 				$class = isset($item[$options['classKey']]) ? $item[$options['classKey']] : '';	
-				if(isset($item[$options['iconKey']])) $icon = str_replace(array('icon-', 'fa-'),'', $item[$options['iconKey']]);
+				if(isset($item[$options['iconKey']])) $icon = str_replace(array('icon-', 'fa-'),'', (string) $item[$options['iconKey']]);
 			} else {
 				$this->error("Item must be object or array: $item"); 
 				continue;
 			}
 			if(empty($icon) && $options['icon']) $icon = $options['icon'];
 			$_label = $label;
-			$label = $this->wire('sanitizer')->entities1($label);
+			$label = $sanitizer->entities1($label);
 			while(isset($data['list'][$_label])) $_label .= "_";
 		
 			if($options['itemLabel2']) {
 				$label2 = is_array($item) ? $item[$options['itemLabel2']] : $item->{$options['itemLabel2']}; 
-				if(strlen($label2)) {
-					$label2 = $this->wire('sanitizer')->entities1($label2);
+				if(strlen("$label2")) {
+					$label2 = $sanitizer->entities1($label2);
 					$label .= " <small>$label2</small>";
+				}
+			}
+			
+			if(!empty($options['labelClassKey'])) {
+				if(is_array($item)) {
+					$labelClass = isset($item[$options['labelClassKey']]) ? $item[$options['labelClassKey']] : '';
+				} else {
+					$labelClass = is_object($item) ? $item->{$options['labelClassKey']} : '';
+				}
+				if($labelClass) {
+					$labelClass = $sanitizer->entities($labelClass);
+					$label = "<span class='$labelClass'>$label</span>";
 				}
 			}
 			
@@ -506,7 +533,7 @@ abstract class Process extends WireData implements Module {
 		
 		if(!empty($options['getArray'])) return $data;
 
-		if($this->wire('config')->ajax) header("Content-Type: application/json");
+		if($config->ajax) header("Content-Type: application/json");
 		return json_encode($data);
 	}
 
@@ -526,7 +553,7 @@ abstract class Process extends WireData implements Module {
 	 */
 	public function setViewFile($file) {
 		if(strpos($file, '..') !== false) throw new WireException("Invalid view file (relative paths not allowed)"); 
-		$config = $this->wire('config');
+		$config = $this->wire()->config;
 		if(strpos($file, $config->paths->root) === 0 && is_file($file)) {
 			// full path filename already specified, nothing to auto-determine
 		} else {
@@ -594,11 +621,31 @@ abstract class Process extends WireData implements Module {
 	 * 
 	 */
 	public function getProcessPage() {
-		$page = $this->wire('page'); 
+		$page = $this->wire()->page; 
 		if($page->process === $this) return $page;
-		$moduleID = $this->wire('modules')->getModuleID($this);
+		$moduleID = $this->wire()->modules->getModuleID($this);
 		if(!$moduleID) return new NullPage();
-		$page = $this->wire('pages')->get("process=$moduleID, include=all"); 
+		$page = $this->wire()->pages->get("process=$moduleID, include=all"); 
 		return $page;
+	}
+
+	/**
+	 * URL to redirect to after non-authenticated user is logged-in, or false if module does not support
+	 * 
+	 * When supported, module should gather any input GET vars and URL segments that it recognizes,
+	 * sanitize them, and return a URL for that request. ProcessLogin will redirect to the returned URL
+	 * after user has successfully authenticated. 
+	 * 
+	 * If module does not support this, or only needs to support an integer 'id' GET var, then this
+	 * method can return false. 
+	 * 
+	 * @param Page $page Requested page
+	 * @return bool|string
+	 * @sine 3.0.167
+	 * 
+	 */
+	public static function getAfterLoginUrl(Page $page) {
+		if($page) {}
+		return false;
 	}
 }

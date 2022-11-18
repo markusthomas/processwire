@@ -90,7 +90,7 @@
  * 
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  *
  * @link https://processwire.com/api/variables/sanitizer/ Offical $sanitizer API variable Documentation
@@ -225,6 +225,101 @@ class Sanitizer extends Wire {
 	);
 
 	/**
+	 * Sanitizer method names (A-Z) and type(s) they return 
+	 * 
+	 * a: array
+	 * b: boolean
+	 * f: float
+	 * i: integer
+	 * m: mixed
+	 * n: null
+	 * s: string
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $sanitizers = array(
+		'alpha' => 's',
+		'alphanumeric' => 's',
+		'array' => 'a',
+		'arrayVal' => 'a',
+		'attrName' => 's',
+		'bit' => 'i',
+		'bool' => 'b',
+		'camelCase' => 's',
+		'chars' => 's',
+		'checkbox' => 'b',
+		'date' => 'ins',
+		'digits' => 's',
+		'email' => 's',
+		'emailHeader' => 's',
+		'entities' => 's',
+		'entities1' => 's',
+		'entitiesA' => 'asifb',
+		'entitiesA1' => 'asifb',
+		'entitiesMarkdown' => 's',
+		'fieldName' => 's',
+		'fieldSubfield' => 's',
+		'filename' => 's',
+		'flatArray' => 'a',
+		'float' => 'f',
+		'httpUrl' => 's',
+		'hyphenCase' => 's',
+		'int' => 'i',
+		'intArray' => 'a',
+		'intArrayVal' => 'a',
+		'intSigned' => 'i',
+		'intUnsigned' => 'i',
+		'kebabCase' => 's',
+		'line' => 's',
+		'lines' => 's',
+		'markupToLine' => 's',
+		'markupToText' => 's',
+		'max' => 'fi',
+		'maxBytes' => 's',
+		'maxLength' => 'afis',
+		'minLength' => 's',
+		'min' => 'fi',
+		'minArray' => 'a',
+		'name' => 's',
+		'names' => 'as',
+		'normalizeWhitespace' => 's',
+		'pageName' => 's',
+		'pageNameTranslate' => 's',
+		'pageNameUTF8' => 's',
+		'pagePathName' => 's',
+		'pagePathNameUTF8' => 's',
+		'pascalCase' => 's',
+		'path' => 'bs',
+		'purify' => 's',
+		'range' => 'fi',
+		'reduceWhitespace' => 's',
+		'removeMB4' => 'ams',
+		'removeNewlines' => 's',
+		'removeWhitespace' => 's',
+		'sanitize' => 'm',
+		'selectorField' => 's',
+		'selectorValue' => 's',
+		'selectorValueAdvanced' => 's',
+		'snakeCase' => 's',
+		'string' => 's',
+		'templateName' => 's',
+		'text' => 's',
+		'textarea' => 's',
+		'textdomain' => 's', 
+		'trim' => 's',
+		'truncate' => 's',
+		'unentities' => 's',
+		'url' => 's',
+		'valid' => 'b',
+		'validate' => 'm',
+		'varName' => 's',
+		'word' => 's', 
+		'words' => 's', 
+		'wordsArray' => 'a',
+	);
+
+	/**
 	 * Construct the sanitizer
 	 *
 	 */
@@ -289,12 +384,12 @@ class Sanitizer extends Wire {
 		if($needsWork) {
 			$value = str_replace(array("'", '"'), '', $value); // blank out any quotes
 			$_value = $value;
-			$filters = FILTER_FLAG_STRIP_LOW | FILTER_FLAG_STRIP_HIGH | FILTER_FLAG_NO_ENCODE_QUOTES;
-			$value = filter_var($value, FILTER_SANITIZE_STRING, $filters);
+			$filters = FILTER_FLAG_STRIP_LOW | FILTER_FLAG_STRIP_HIGH | FILTER_FLAG_STRIP_BACKTICK;
+			$value = filter_var($value, FILTER_UNSAFE_RAW, $filters);
 			if(!strlen($value)) {
 				// if above filter blanked out the string, try with brackets already replaced
 				$value = str_replace(array('<', '>', '«', '»', '‹', '›'), $replacementChar, $_value);
-				$value = filter_var($value, FILTER_SANITIZE_STRING, $filters);
+				$value = filter_var($value, FILTER_UNSAFE_RAW, $filters);
 			}
 			$hyphenPos = strpos($extras, '-');
 			if($hyphenPos !== false && $hyphenPos !== 0) {
@@ -307,7 +402,9 @@ class Sanitizer extends Wire {
 
 		// remove leading or trailing dashes, underscores, dots
 		if($beautify) {
-			if(strpos($extras, $replacementChar) === false) $extras .= $replacementChar;
+			if($replacementChar !== null && strlen($replacementChar)) {
+				if(strpos($extras, $replacementChar) === false) $extras .= $replacementChar;
+			}
 			$value = trim($value, $extras);
 		}
 
@@ -370,17 +467,17 @@ class Sanitizer extends Wire {
 				
 				if(empty($options['allowAdjacentExtras'])) {
 					// replace any of '-_.' next to each other with a single $replacement
-					$value = preg_replace('/[' . $allowedExtrasStr . ']{2,}/', $replacement, $value);
+					$value = preg_replace('![' . $allowedExtrasStr . ']{2,}!', $replacement, $value);
 				}
 
 				if(empty($options['allowDoubledReplacement'])) {
 					// replace double'd replacements
 					$r = "$replacement$replacement";
-					if(strpos($value, $r) !== false) $value = preg_replace('/' . $r . '+/', $replacement, $value);
+					while(strpos($value, $r) !== false) $value = str_replace($r, $replacement, $value);
 				}
 	
 				// replace double dots
-				if(strpos($value, '..') !== false) $value = preg_replace('/\.\.+/', '.', $value);
+				while(strpos($value, '..') !== false) $value = str_replace('..', '.', $value);
 			}
 			
 			if(strlen($value) > $maxLength) $value = substr($value, 0, $maxLength); 
@@ -414,7 +511,7 @@ class Sanitizer extends Wire {
 		}
 		$replace = array(',', '|', '  ');
 		if($delimeter != ' ' && !in_array($delimeter, $replace)) $replace[] = $delimeter; 
-		$value = str_replace($replace, ' ', $value);
+		$value = str_replace($replace, ' ', "$value");
 		$allowedExtras[] = ' ';
 		$value = $this->nameFilter($value, $allowedExtras, $replacementChar, $beautify, 8192);
 		if($delimeter != ' ') $value = str_replace(' ', $delimeter, $value); 
@@ -447,6 +544,8 @@ class Sanitizer extends Wire {
 	/**
 	 * Sanitize to an ASCII-only HTML attribute name
 	 * 
+	 * #pw-group-strings
+	 * 
 	 * @param string $value
 	 * @param int $maxLength
 	 * @return string
@@ -454,12 +553,13 @@ class Sanitizer extends Wire {
 	 * 
 	 */
 	public function attrName($value, $maxLength = 255) {
-		
+	
+		$value = $this->string($value);
 		$value = trim($value); // force as trimmed string
 		if(ctype_alpha($value) && strlen($value) <= $maxLength) return $value; // simple 1-word attributes
 
 		// remove any non ":_a-zA-Z" characters from beginning of attribute name
-		while(strpos(":_$this->alphaASCII", substr($value, 0, 1)) === false && strlen($value)) {
+		while(strlen($value) && strpos(":_$this->alphaASCII", substr($value, 0, 1)) === false) {
 			$value = substr($value, 1); 
 		}
 		
@@ -535,6 +635,8 @@ class Sanitizer extends Wire {
 	 * echo $sanitizer->fieldSubfield('foo bar baz'); // outputs: foo_bar_baz
 	 * ~~~~~~
 	 * 
+	 * #pw-group-strings
+	 * 
 	 * @param string $value Value to sanitize
 	 * @param int $limit Max allowed quantity of subfields, or use -1 for any quantity (default=1). 
 	 * @return string
@@ -542,6 +644,7 @@ class Sanitizer extends Wire {
 	 * 
 	 */
 	public function fieldSubfield($value, $limit = 1) {
+		$value = $this->string($value);
 		if(!strlen($value)) return '';
 		if(!strpos($value, '.')) return $this->fieldName($value);
 		$parts = array();
@@ -612,6 +715,7 @@ class Sanitizer extends Wire {
 	 */
 	public function pageName($value, $beautify = false, $maxLength = 128, array $options = array()) {
 	
+		$value = $this->string($value);
 		if(!strlen($value)) return '';
 		
 		$defaults = array(
@@ -716,7 +820,8 @@ class Sanitizer extends Wire {
 	 *
 	 */
 	public function pageNameUTF8($value, $maxLength = 128) {
-		
+	
+		$value = $this->string($value);
 		if(!strlen($value)) return '';
 		
 		// if UTF8 module is not enabled then delegate this call to regular pageName sanitizer
@@ -757,6 +862,8 @@ class Sanitizer extends Wire {
 			} else if($inBlacklist || !strlen(trim($c)) || ctype_cntrl($c)) {
 				// character does not resolve to something visible or is in blacklist
 				$replacements[] = $c;
+			} else if($whitelist === false) {
+				// whitelist disabled: allow everything that is not blacklisted
 			} else {
 				// character that is not in whitelist, double check case variants
 				$cLower = $tt->strtolower($c);
@@ -1005,62 +1112,81 @@ class Sanitizer extends Wire {
 	 * - `Sanitizer::toAscii` (constant): Convert UTF-8 characters to punycode ASCII. 
 	 * - `Sanitizer::toUTF8` (constant): Convert punycode ASCII to UTF-8. 
 	 * - `Sanitizer::okUTF8` (constant): Allow UTF-8 characters to appear in path (implied if $config->pageNameCharset is 'UTF8'). 
-	 * @param int $maxLength Maximum length (default=1024)
+	 * @param int $maxLength Maximum length (default=2048)
 	 * @return string Sanitized path name
 	 *
 	 */
-	public function pagePathName($value, $beautify = false, $maxLength = 1024) {
-	
+	public function pagePathName($value, $beautify = false, $maxLength = 2048) {
+
+		$value = $this->string($value);
+		if(!strlen($value)) return '';
+		
 		$extras = array('/', '-', '_', '.');
-		$options = array('allowedExtras' => $extras);
-		$charset = $this->wire('config')->pageNameCharset;
-	
-		if($charset === 'UTF8' && $beautify === self::toAscii) {
+		$utf8 = $this->wire()->config->pageNameCharset === 'UTF8';
+
+		if($beautify === self::toAscii && $utf8) {
 			// convert UTF8 to punycode when applicable
-			if(!ctype_alnum(str_replace($extras, '', $value))) {
+			if(ctype_alnum(str_replace($extras, '', $value))) {
+				// value needs no ascii conversion
+			} else {
+				// convert UTF8 to ascii value
 				$parts = explode('/', $value);
 				foreach($parts as $n => $part) {
 					if(!strlen($part) || ctype_alnum($part)) continue;
-					if(!ctype_alnum(str_replace($extras, '', $part))) {
-						$parts[$n] = $this->pageName($part, self::toAscii);
-					}
+					$b = (ctype_alnum(str_replace($extras, '', $part)) ? false : self::toAscii);
+					$parts[$n] = $this->pageName($part, $b, $maxLength);
 				}
 				$value = implode('/', $parts);
 			}
-		}
-		
-		if($charset === 'UTF8' && $beautify === self::okUTF8) {
+
+		} else if($beautify === self::okUTF8 && $utf8) {
+			// UTF8 path
 			$value = $this->pagePathNameUTF8($value);
-		} else {
-			if(in_array($beautify, array(self::okUTF8, self::toUTF8, self::toAscii))) $beautify = false;
-			// regular ascii path
-			$value = $this->name($value, $beautify, $maxLength, '-', $options);
-		}
-		
-		// disallow double slashes
-		while(strpos($value, '//') !== false) $value = str_replace('//', '/', $value); 
-		
-		// disallow relative paths
-		while(strpos($value, '..') !== false) $value = str_replace('..', '.', $value);
-		
-		// disallow names that start with a period
-		while(strpos($value, '/.') !== false) $value = str_replace('/.', '/', $value);
-	
-		// ascii to UTF8 conversion, when requested
-		if($charset === 'UTF8' && $beautify === self::toUTF8) {
-			if(strpos($value, 'xn-') === false) return $value;
+
+		} else if($beautify === self::toUTF8 && $utf8 && strpos($value, 'xn-') !== false) {
+			// ASCII to UTF8 conversion, when requested
 			$parts = explode('/', $value);
 			foreach($parts as $n => $part) {
-				if(strpos($part, 'xn-') !== 0) continue;
-				$parts[$n] = $this->pageName($part, self::toUTF8);
+				if(!strlen($part)) continue;
+				$b = strpos($part, 'xn-') === 0 ? self::toUTF8 : false;
+				$parts[$n] = $this->pageName($part, $b, $maxLength);
 			}
 			$value = implode('/', $parts);
 			$value = $this->pagePathNameUTF8($value);
+
+		} else {
+			// ASCII path standard
+			$b = $beautify;
+			if($b === self::okUTF8 || $b === self::toUTF8 || $b === self::toAscii) $b = false;
+			$parts = explode('/', $value);
+			foreach($parts as $n => $part) {
+				if(!strlen($part)) continue;
+				$parts[$n] = $this->pageName($part, $b, $maxLength);
+			}
+
+			$value = implode('/', $parts);
 		}
 
-		return $value; 
-	}
+		// no double-slash, double-dot or slash-dot
+		$reps = array('//' => '/', '..' => '.', '/.' => '/');
+		foreach($reps as $find => $replace) {
+			while(strpos($value, $find) !== false) {
+				$value = str_replace(array_keys($reps), array_values($reps), $value);
+			}
+		}
+		
+		// truncate if needed
+		if($maxLength && strlen($value) > $maxLength) {
+			$slash = substr($value, -1) === '/';
+			$value = substr($value, 0, $maxLength);
+			$pos = strrpos($value, '/');
+			if($pos) $value = substr($value, 0, $pos);
+			if($slash) $value = rtrim($value, '/') . '/';
+		}
 
+		return $value;
+	}
+	
 	/**
 	 * Sanitize a UTF-8 page path name (does not perform ASCII/UTF8 conversions)
 	 * 
@@ -1077,15 +1203,17 @@ class Sanitizer extends Wire {
 	 */
 	public function pagePathNameUTF8($value) {
 		if($this->wire('config')->pageNameCharset !== 'UTF8') return $this->pagePathName($value);
+		$value = $this->string($value);
+		if(!strlen($value)) return '';
 		$parts = explode('/', $value);
 		foreach($parts as $n => $part) {
 			$parts[$n] = $this->pageName($part, self::okUTF8);
 		}
 		$value = implode('/', $parts);
-		$disallow = array('..', '/.', '//');
+		$disallow = array('..', '/.', './', '//');
 		foreach($disallow as $x) {
 			while(strpos($value, $x) !== false) {
-				$value = str_replace($x, '', $value);
+				$value = str_replace($disallow, '', $value);
 			}
 		}
 		return $value; 
@@ -1134,6 +1262,7 @@ class Sanitizer extends Wire {
 	 * Sanitize string to contain only ASCII digits (0-9)
 	 * 
 	 * #pw-group-strings
+	 * #pw-group-numbers
 	 *
 	 * @param string $value Value to sanitize
 	 * @param int $maxLength Maximum length of returned value (default=1024)
@@ -1187,6 +1316,117 @@ class Sanitizer extends Wire {
 		if($headerName) $value = trim(preg_replace('/[^-_a-zA-Z0-9]/', '-', trim($value, ':')), '-'); 
 		return $value;
 	}
+	
+	/**
+	 * Return first word in given string
+	 *
+	 * #pw-group-strings
+	 *
+	 * @param string $value String containing one or more words
+	 * @param array $options Options to adjust behavior: 
+	 *  - `keepNumbers` (bool): Allow numbers as return value? (default=true)
+	 *  - `keepNumberFormat` (bool): Keep minus/comma/period in numbers rather than splitting into words? Also requires keepNumbers==true. (default=false)
+	 *  - `keepUnderscore` (bool): Keep underscores as part of words? (default=false)
+	 *  - `keepHyphen` (bool): Keep hyphenated words? (default=false)
+	 *  - `keepChars` (array): Specify any of these to also keep as part of words ['.', ',', ';', '/', '*', ':', '+', '<', '>', '_', '-' ] (default=[])
+	 *  - `minWordLength` (int): Minimum word length (default=1)
+	 *  - `maxWordLength` (int): Maximum word length (default=80)
+	 *  - `maxWords` (int): Maximum words (default=1 or 99 if a seperator option is specified)
+	 *  - `maxLength` (int): Maximum returned string length (default=1024)
+	 *  - `stripTags` (bool): Strip markup tags so they don’t contribute to returned word? (default=true)
+	 *  - `separator' (string): Merge multiple words into one word split by this character? (default='', disabled) 3.0.195+
+	 *  - `ascii` (bool): Allow only ASCII word characters? (default=false)
+	 *  - `beautify` (bool): Make ugly strings more pretty? This collapses and trims redundant separators (default=false)
+	 * @return string
+	 * @see Sanitizer::wordsArray()
+	 * @since 3.0.162
+	 *
+	 */
+	public function word($value, array $options = array()) {
+		
+		if(!is_string($value)) $value = $this->string($value);
+		
+		$separator = isset($options['separator']) ? $options['separator'] : null;
+		$keepChars = isset($options['keepChars']) ? $options['keepChars'] : array();
+		$maxLength = isset($options['maxLength']) ? (int) $options['maxLength'] : 1024;
+		$minWordLength = isset($options['minWordLength']) ? $options['minWordLength'] : 1;
+	
+		if(empty($options['maxWords'])) $options['maxWords'] = $separator !== null ? 99 : 1;
+		if(!empty($options['keepHyphen']) && !in_array('-', $keepChars)) $keepChars[] = '-';
+		if(!empty($options['keepUnderscore']) && !in_array('_', $keepChars)) $keepChars[] = '_';
+		
+		$options['keepChars'] = $keepChars;
+
+		$a = $this->wordsArray($value, $options);
+		$count = count($a);
+		if(!$count) return '';
+		
+		if($separator !== null && $count > 1) {
+			$value = implode($separator, $a);
+		} else if($count) {
+			$value = reset($a); 
+		}
+		
+		if(!empty($options['ascii'])) {
+			$sep = $separator === null ? '' : $separator;
+			$value = $this->nameFilter($value, $keepChars, $sep, Sanitizer::translate, $maxLength); 
+		} else if($maxLength) {
+			$length = $this->multibyteSupport ? mb_strlen($value) : strlen($value);
+			if($length > $maxLength) {
+				$value = $this->multibyteSupport ? mb_substr($value, 0, $maxLength) : substr($value, 0, $maxLength);
+			}
+		}
+		
+		if(!empty($options['beautify'])) {
+			foreach($keepChars as $s) {
+				while(strpos($value, "$s$s") !== false) $value = str_replace("$s$s", $s, $value);
+			}
+			$value = trim($value, implode('', $keepChars));
+		}
+		
+		if($minWordLength > 1 && strlen($value) < $minWordLength) $value = '';
+		
+		return $value;
+	}
+
+	/**
+	 * Given string return a new string containing only words
+	 * 
+	 * #pw-group-strings
+	 * 
+	 * @param $value
+	 * @param array $options
+	 *  - `separator` (string): String to use to separate words (default=' ')
+	 *  - `ascii` (string): Only allow ASCII characters in words? (default=false)
+	 *  - `keepUnderscore` (bool): Keep underscores as part of words? (default=false)
+	 *  - `keepHyphen` (bool): Keep hyphenated words? (default=false)
+	 *  - `keepChars` (array): Additional non word characters to keep (default=[]) 
+	 *  - `maxWordLength` (int): Maximum word length (default=80)
+	 *  - `minWordLength` (int): Minimum word length (default=1)
+	 *  - `maxLength` (int): Maximum return value length (default=1024)
+	 *  - `beautify` (bool): Make ugly strings more pretty? This collapses and trims redundant separators (default=true)
+	 * @since 3.0.195
+	 * @return string
+	 * 
+	 */
+	public function words($value, array $options = array()) {
+		
+		$defaults = array(
+			'ascii' => false,
+			'separator' => ' ', 
+			'keepHyphen' => true, 
+			'keepUnderscore' => true, 
+			'keepChars' => array(),
+			'maxWordLength' => 255,
+			'maxLength' => 1024, 
+			'beautify' => true, 
+		);
+		
+		$options = array_merge($defaults, $options);
+		$value = $this->word($value, $options);
+		
+		return $value;
+	}
 
 	/**
 	 * Sanitize short string of text to single line without HTML
@@ -1227,7 +1467,7 @@ class Sanitizer extends Wire {
 	 * - `inCharset` (string): input character set (default="UTF-8").
 	 * - `outCharset` (string): output character set (default="UTF-8").
 	 * @return string
-	 * @see Sanitizer::textarea()
+	 * @see Sanitizer::textarea(), Sanitizer::line()
 	 *
 	 */
 	public function text($value, $options = array()) {
@@ -1394,7 +1634,7 @@ class Sanitizer extends Wire {
 	 * @param string $value String value to sanitize
 	 * @param array $options Options to modify default behavior
 	 * - `maxLength` (int): maximum characters allowed, or 0=no max (default=16384 or 16kb).
-	 * - `maxBytes` (int): maximum bytes allowed (default=0, which implies maxLength*3 or 48kb).
+	 * - `maxBytes` (int): maximum bytes allowed (default=0, which implies maxLength*4 or 64kb).
 	 * - `stripTags` (bool): strip markup tags? (default=true).
 	 * - `stripMB4` (bool): strip emoji and other 4-byte UTF-8? (default=false).
 	 * - `stripIndents` (bool): Remove indents (space/tabs) at the beginning of lines? (default=false). Since 3.0.105
@@ -1433,10 +1673,75 @@ class Sanitizer extends Wire {
 	}
 
 	/**
+	 * Sanitize any string of text to single line, no HTML, and no specific max-length (unless given)
+	 *
+	 * This is the same as the text() sanitizer but does not impose a maximum character length (or
+	 * byte length) unless given one in the `$maxLength` argument. This is useful in cases where the
+	 * text sanitizer’s built in 255 character max length (1020 max bytes) is not enough, or when you
+	 * want to specify a max length as part of the method arguments.
+	 *
+	 * Please note that like with the text sanitizer, the max length refers to a maximum number of
+	 * characters, not bytes. The maxBytes is automatically set to the maxLength * 4, or can be
+	 * specifically set via the `maxBytes` option.
+	 *
+	 * #pw-group-strings
+	 *
+	 * @param string $value String to sanitize
+	 * @param int|array $maxLength Maximum length in characters, omit (0) for no max-length, or substitute $options array
+	 * @param array $options Options to modify behavior, see text() sanitizer for all options.
+	 * @return string
+	 * @see Sanitizer::text(), Sanitizer::lines()
+	 * @since 3.0.157
+	 *
+	 */
+	public function line($value, $maxLength = 0, array $options = array()) {
+		if(is_array($maxLength)) {
+			$options = $maxLength;
+			if(!isset($options['maxLength'])) $options['maxLength'] = 0;
+		} else {
+			$options['maxLength'] = $maxLength;
+		}
+		return $this->text($value, $options);
+	}
+
+	/**
+	 * Sanitize input string as multi-line text, no HTML tags, and no specific max length (unless given)
+	 * 
+	 * This is the same as the textarea() sanitizer but does not impose a maximum character length (or
+	 * byte length) unless given one in the `$maxLength` argument. This is useful in cases where the
+	 * textarea sanitizer’s built in 16kb character max length (64kb max bytes) is not enough, or when you
+	 * want to specify a max length as part of the method arguments.
+	 *
+	 * Please note that like with the textarea sanitizer, the max length refers to a maximum number of
+	 * characters, not bytes. The maxBytes is automatically set to the maxLength * 4, or can be
+	 * specifically set via the `maxBytes` option. 
+	 *
+	 * #pw-group-strings
+	 *
+	 * @param string $value String value to sanitize
+	 * @param int|array $maxLength Maximum length in characters, omit (0) for no max-length, or substitute $options array
+	 * @param array $options Options to modify behavior, see textarea() sanitizer for all options. 
+	 * @return string
+	 * @see Sanitizer::textarea(), Sanitizer::purify(), Sanitizer::line()
+	 * @since 3.0.157
+	 *
+	 */
+	public function lines($value, $maxLength = 0, $options = array()) {
+		if(is_array($maxLength)) {
+			$options = $maxLength;
+			if(!isset($options['maxLength'])) $options['maxLength'] = 0;
+		} else {
+			$options['maxLength'] = $maxLength;
+		}
+		return $this->textarea($value, $options);
+	}
+
+	/**
 	 * Convert a string containing markup or entities to be plain text
 	 * 
 	 * This is one implementation but there is also a better one that you may prefer with the
-	 * `WireTextTools::markupToText()` method:
+	 * `WireTextTools::markupToText()` method. Try both to determine which suits your needs
+	 * best: 
 	 * 
 	 * ~~~~~
 	 * $markup = '<html>a bunch of HTML here</html>';
@@ -1450,11 +1755,11 @@ class Sanitizer extends Wire {
 	 * @param string $value String you want to convert
 	 * @param array $options Options to modify default behavior: 
 	 *   - `newline` (string): Character(s) to replace newlines with (default="\n").
-	 *   - `separator` (string): Character(s) to separate HTML <li> items with (default="\n").
+	 *   - `separator` (string): Character(s) to separate HTML `<li>` items with (default="\n").
 	 *   - `entities` (bool): Entity encode returned value? (default=false). 
 	 *   - `trim` (string): Character(s) to trim from beginning and end of value (default=" -,:;|\n\t").
 	 * @return string Converted string of text
-	 * @see WireTextTools::markupToText() for different though likely better (for most cases) implementation. 
+	 * @see WireTextTools::markupToText(), Sanitizer::markupToLine()
 	 * 
 	 */	
 	public function markupToText($value, array $options = array()) {
@@ -1468,6 +1773,7 @@ class Sanitizer extends Wire {
 
 		$options = array_merge($defaults, $options);
 		$newline = $options['newline'];
+		$value = $this->string($value);
 
 		if(strpos($value, "\r") !== false) {
 			// normalize newlines
@@ -1475,7 +1781,7 @@ class Sanitizer extends Wire {
 		}
 
 		// remove entities
-		$value = $this->wire('sanitizer')->unentities($value);
+		$value = $this->unentities($value);
 
 		if(strpos($value, '<') !== false) {
 			// tag replacements before strip_tags()
@@ -1590,6 +1896,7 @@ class Sanitizer extends Wire {
 			'allowSchemes' => array(),
 			'disallowSchemes' => array('file', 'javascript'),
 			'requireScheme' => true,
+			'reduceScheme' => false, // reduce "scheme://" to "scheme:" in return value? (internal use only)
 			'convertEncoded' => true, 
 			'encodeSpace' => false, 
 			'stripTags' => true,
@@ -1614,7 +1921,7 @@ class Sanitizer extends Wire {
 		if(!strlen($value)) return '';
 
 		$scheme = parse_url($value, PHP_URL_SCHEME);
-		if($scheme !== false && strlen($scheme)) {
+		if(is_string($scheme) && strlen($scheme)) {
 			$_scheme = $scheme;
 			$scheme = strtolower($scheme);
 			$schemeError = false;
@@ -1625,14 +1932,24 @@ class Sanitizer extends Wire {
 				if($options['throw']) throw new WireException($error);
 				$this->error($error);
 				$value = str_ireplace(array("$scheme:///", "$scheme://"), '', $value);
-			} else if($_scheme !== $scheme) {
-				$value = str_replace("$_scheme://", "$scheme://", $value); // lowercase scheme
+			} else {
+				if(strpos($value, '://') === false && stripos($value, "$_scheme:") === 0) {
+					// URL is in "scheme:value" format
+					if(!in_array($scheme, array('http', 'https', 'ftp', 'tel', 'mailto'))) {
+						// add scheme in "scheme://" format temporarily so filter_var won’t throw it out
+						$value = "$scheme://" . substr($value, strlen("$_scheme:"));
+						$options['reduceScheme'] = true;
+					}
+				}
+				if($_scheme !== $scheme) {
+					$value = str_replace("$_scheme://", "$scheme://", $value); // lowercase scheme
+				}
 			}
 		}
 
 		// separate scheme+domain+path from query string temporarily
 		if(strpos($value, '?') !== false) {
-			list($domainPath, $queryString) = explode('?', $value);
+			list($domainPath, $queryString) = explode('?', $value, 2);
 			if(!$options['allowQuerystring']) $queryString = '';
 		} else {
 			$domainPath = $value;
@@ -1655,9 +1972,10 @@ class Sanitizer extends Wire {
 			// restore characters allowed in domain/path
 			$domainPath = str_replace(array('%2F', '%3A'), array('/', ':'), $domainPath);
 			// restore value that is now FILTER_SANITIZE_URL compatible
-			$value = $domainPath . (strlen($queryString) ? "?$queryString" : "");
 			$pathIsEncoded = true;
 		}
+		
+		$value = $domainPath . (strlen($queryString) ? "?$queryString" : "");
 
 		// this filter_var sanitizer just removes invalid characters that don't appear in domains or paths
 		$value = filter_var($value, FILTER_SANITIZE_URL);
@@ -1706,17 +2024,7 @@ class Sanitizer extends Wire {
 				// if a scheme was added above (for filter_var validation) and it's not required, remove it
 				$value = str_replace('http://', '', $value);
 			}
-		} else if($scheme == 'tel') {
-			// tel: scheme is not supported by filter_var 
-			if(!preg_match('/^tel:\+?\d+$/', $value)) {
-				$value = str_replace(' ', '', $value);
-				/** @noinspection PhpUnusedLocalVariableInspection */
-				list($tel, $num) = explode(':', $value);
-				$value = 'tel:';
-				if(strpos($num, '+') === 0) $value .= '+';
-				$value .= preg_replace('/[^\d]/', '', $num);
-			}
-		} else {
+		} else if($scheme !== 'tel') {
 			// URL already has a scheme
 			$value = $this->filterValidateURL($value, $options);
 		}
@@ -1738,6 +2046,16 @@ class Sanitizer extends Wire {
 			$domainPath = $this->text($domainPath, $textOptions);
 			$value = $domainPath . (strlen($queryString) ? "?$queryString" : "");
 		}
+		
+		if($scheme === 'tel' && !preg_match('/^tel:\+?\d+$/', $value)) {
+			// tel: scheme is not supported by filter_var 
+			$value = str_replace(' ', '', $value);
+			/** @noinspection PhpUnusedLocalVariableInspection */
+			list($tel, $num) = explode(':', $value);
+			$value = 'tel:';
+			if(strpos($num, '+') === 0) $value .= '+';
+			$value .= preg_replace('/[^\d]/', '', $num);
+		}
 
 		if(!strlen($value)) return '';
 		
@@ -1757,6 +2075,11 @@ class Sanitizer extends Wire {
 		
 		if($options['encodeSpace'] && strpos($value, ' ')) {
 			$value = str_replace(' ', '%20', $value);
+		}
+		
+		if($options['reduceScheme']) {
+			list($scheme, $value) = explode('://', $value, 2);
+			$value = "$scheme:$value";
 		}
 		
 		return $value;
@@ -1909,18 +2232,328 @@ class Sanitizer extends Wire {
 	 *
 	 * @param string|array $value String value to sanitize (assumed to be UTF-8), 
 	 *   or in 3.0.127+ you may use an array and it will be sanitized to an OR value string. 
-	 * @param array|int $options Options to modify behavior: 
+	 * @param array|int $options Options to modify behavior. Note version 1 supports only `maxLength` and `useQuotes` options.
+	 *   - `version` (int): Version 1 or 2 (default=2). Version 2 available in 3.0.156+. Note option is remembered between calls.
 	 *   - `maxLength` (int): Maximum number of allowed characters (default=100). This may also be specified instead of $options array.
 	 *   - `useQuotes` (bool): Allow selectorValue() function to add quotes if it deems them necessary? (default=true)
+	 *   - All following options are only supported in version 2 (available in 3.0.156+): 
+	 *   - `allowArray` (bool): Allow arrays to convert to OR-strings? If false, only 1st item in arrays is used. (default=true)
+	 *   - `allowSpace` (bool): Allow spaces? False to remove or true to allow (default=true) 3.0.168+
+	 *   - `operator` (string): Operator being used in selector, optionally apply for operator-specific filtering. 
+	 *   - `emptyValue` (string): Value to return if selector reduced to blank. Optionally use this to return something 
+	 *      that could never match, or return something for you to evaluate yourself, like boolean false. (default=blank string)
+	 *   - `blacklist` (array): Additional characters you want to disallow. (default=[])
+	 *   - `whitelist` (array): Characters that are in default blacklist that you still want to allow. (default=[])
+	 *   - `quotelist` (array): Additional characters that should always trigger quoted value. (default=[])
 	 *   - If an integer is specified for $options, it is assumed to be the maxLength value. 
-	 * @return string Value ready to be used as the value component in a selector string. 
+	 * @return string|int|bool|mixed Value ready to be used as the value component in a selector string. 
+	 *   Always returns string unless you specify something different for 'emptyValue' option.
 	 * 
 	 */
 	public function selectorValue($value, $options = array()) {
 		
+		static $version = 2;
+		
+		if(is_int($options)) {
+			$options = array('maxLength' => $options);
+		} else if(!is_array($options)) {
+			$options = array();
+		}
+		
+		if(isset($options['version'])) $version = (int) $options['version'];
+		
+		return $version > 1 ? $this->selectorValueV2($value, $options) : $this->selectorValueV1($value, $options);
+	}
+	
+	/**
+	 * Sanitize selector value for advanced text search operator (#=)
+	 * 
+	 * The [advanced text search operator](https://processwire.com/docs/selectors/operators/#contains-advanced) 
+	 * `#=` supports some characters that are typically excluded from selector values, so this method enables 
+	 * you to prepare a selector value for use with it. This method should not be used for sanitizing any other 
+	 * kinds of selector values. 
+	 * 
+	 * Characters that have meaning to the advanced text search operator include `+-*()"` and thus their 
+	 * appearance in the `$value` argument is assumed to be a command rather than text to search for. Though 
+	 * note that non-matching double quotes or parenthesis are removed. 
+	 * 
+	 * *Note: If double quotes are used in your selector value, this method will convert them to matching 
+	 * parenthesis, i.e. `+"phrase"` gets converted to `+(phrase)`.*
+	 * 
+	 * #pw-group-strings
+	 * 
+	 * @param string|array $value
+	 * @param array $options See options for Sanitizer::selectorValue() method
+	 * @return bool|mixed|string
+	 * @since 3.0.182
+	 * @see Sanitizer::selectorValue()
+	 * @see https://processwire.com/docs/selectors/operators/#contains-advanced
+	 *
+	 */
+	public function selectorValueAdvanced($value, array $options = array()) {
+		$options['operator'] = '#=';
+		return $this->selectorValueV2($value, $options);
+	}
+
+
+	/**
+	 * Wrapper for selectorValueV2() when it receives an array
+	 * 
+	 * @param array $value
+	 * @param array $options See options for selectorValue()
+	 * @return string Always returns string unless you specify something different for 'emptyValue'
+	 * 
+	 */
+	protected function selectorValueArray(array $value, $options = array()) {
+		$a = array();
+		$allowArray = isset($options['allowArray']) ? $options['allowArray'] : true;
+		if(count($value) < 2 || !$allowArray) {
+			// if array has 1 or 0 items, or arrays not allowed, return only first item in array
+			$value = reset($value);
+			$value = $this->string($value);
+			return $this->selectorValueV2($value, $options);
+		}
+		$options['useQuotes'] = true; // must be allowed to use quotes when needed in OR condition
+		foreach($value as $v) {
+			$v = $this->selectorValueV2($v, $options);
+			if(!strlen($v)) $v = '""'; // required blank value in OR condition
+			$a[] = $v;
+		}
+		return implode('|', $a);
+	}
+
+	/**
+	 * Sanitize selector value (version 2, 3.0.156+)
+	 * 
+	 * This version is a little more thorough and has more options than version 1. 
+	 *
+	 * @param string|array $value
+	 * @param array $options
+	 * @return bool|mixed|string Always returns string unless you specify something different for 'emptyValue'
+	 *
+	 */
+	protected function selectorValueV2($value, $options = array()) {
+		
+		// characters we remove from selector strings
+		$blacklist = array(
+			'"', "\\0", "\\", "`", "|", '=', '*', '%', '~', '^', '$', '#',
+			'<', '>', '[', ']', '{', '}', "\r", "\n", "\t", 
+		);
+	
+		// characters that trigger quotes around selector value
+		$quotelist = array(
+			"'", ",", "!", ":", ";", "(", ")", "*", "+", 
+		);
+	
 		$defaults = array(
+			'allowArray' => true, 
+			'allowSpace' => true,
 			'maxLength' => 100, 
-			'useQuotes' => true, 
+			'maxBytes' => 400,
+			'useQuotes' => true,
+			'emptyValue' => '',
+			'quoteEmpty' => false, 
+			'operator' => '', 
+			'whitelist' => array(),
+			'blacklist' => $blacklist,
+			'quotelist' => $quotelist, 
+		);
+
+		// if given an array, convert to an OR selector string
+		if(is_array($value)) return $this->selectorValueArray($value, $options);
+
+		// append rather than replace blacklist and quotelist
+		if(!empty($options['blacklist'])) $options['blacklist'] = array_merge($blacklist, $options['blacklist']);
+		if(!empty($options['quotelist'])) $options['quotelist'] = array_merge($quotelist, $options['quotelist']);
+	
+		// prepare options and settings
+		$options = array_merge($defaults, $options);
+		$useQuotes = $options['useQuotes'];
+		$hadQuotes = false;
+		$needsQuotes = false;
+		$maxLength = $options['maxLength'];
+		$maxBytes = $options['maxBytes'];
+		$emptyValue = $options['emptyValue'];
+		$blacklist = $options['blacklist'];
+		$quotelist = $options['quotelist'];
+		$op = $options['operator'];
+		$trims = '+,'; // non-whitespace chars to trim from beginning and end
+		
+		if($emptyValue === '' && $options['quoteEmpty']) $emptyValue = '""';
+		
+		// identify any operator-specific blacklist items
+		if($op && (strpos($op, '~') !== false || strpos($op, '*') !== false) || strpos($op, '#') !== false) {
+			$blacklist[] = '@'; // @ not supported by fulltext match/against in InnoDB
+			if($op === '#=') {
+				// advanced search operator allows command characters
+				foreach(array('*', '+', '(', ')') as $c) {
+					$k = array_search($c, $blacklist);
+					if($k !== false) unset($blacklist[$k]);
+					$trims = str_replace($c, '', $trims);
+				}
+				$value = trim($value);	
+				if(strpos($value, '+') === 0 || strpos($value, '-') === 0) $needsQuotes = true;
+				if(strpos($value, '(') !== false || strpos($value, ')') !== false) {
+					// if there aren't matching quantities of open/close parens then remove them
+					if(substr_count($value, '(') !== substr_count($value, ')')) {
+						$value = str_replace(array('(', ')'), ' ', $value);
+					}
+				}
+				if(strpos($value, '"') !== false) {
+					if(substr_count($value, '"') % 2 === 0) {
+						// equal number of quotes, convert to parenthesis
+						$value = preg_replace('/"([^"]+)"/s', '($1)', $value);
+						$needsQuotes = true;
+					}
+					// remove any remaining/unmatched quotes
+					$value = str_replace('"', ' ', $value);
+				}
+				if(!$needsQuotes && strpos($value, '(') !== false) $needsQuotes = true;
+			}
+		}
+	
+		if(count($options['whitelist'])) {
+			// remove from blacklist that which is present in whitelist		
+			$blacklist = array_diff($blacklist, $options['whitelist']);
+			// add to quotelist that which is present in both whitelist and blacklist
+			$quotelist = array_merge($quotelist, array_intersect($options['whitelist'], $options['blacklist'])); 
+		}
+	
+		// ensure value is a string that is trimmed of whitespace
+		if(!is_string($value)) $value = $this->string($value);
+		$value = trim($value);
+		if(!strlen($value)) return $emptyValue; 
+	
+		// check if value is already in quotes
+		if($value[0] === '"' || $value[0] === "'") {
+			$hadQuotes = substr($value, -1) === $value[0] ? $value[0] : false;
+		}
+	
+		// replace any characters in the blacklist (and not in whitelist) with space
+		$value = str_replace($blacklist, ' ', $value);
+	
+		// test if any of the above resulted in an empty value and exit early if so
+		$value = trim($value);
+		if(!strlen($value)) return $emptyValue;
+
+		// remove other types of whitespace
+		$whitespace = $this->getWhitespaceArray(false);
+		$value = trim(str_replace($whitespace, ($options['allowSpace'] ? ' ' : ''), $value));
+		if(!strlen($value)) return $emptyValue;
+
+		if($value[0] == "'") { 
+			// value starts with single quote/apostrophe
+			if(substr($value, -1) === "'") {
+				// value starts and ends with single quote/apostrophe, remove them
+				$value = trim($value, "' "); 
+			} else {
+				// value only starts with single quote/apostrophe
+				$value = ltrim($value, "' "); 
+				// note: it’s okay if value ends with an apostrophe if it does not start with one
+			}
+		}
+
+		// selector value is limited to a maximum length (in characters)
+		if($maxLength > 0 && strlen($value) > $maxLength) {
+			if($this->multibyteSupport) {
+				if(mb_strlen($value) > $maxLength) {
+					$value = mb_substr($value, 0, $maxLength, 'UTF-8');
+				}
+			} else {
+				$value = substr($value, 0, $maxLength);
+			}
+		}
+	
+		// selector value limited by maximum bytes 
+		if($maxBytes > 0 && strlen($value) > $maxBytes) { 
+			if($this->multibyteSupport) {
+				$len = mb_strlen($value);
+				while(strlen($value) > $maxBytes) {
+					$len--;
+					$value = mb_substr($value, 0, $len);
+				}
+			} else {
+				$value = substr($value, 0, $maxBytes);
+			}	
+		}
+
+		// see if we can avoid the preg_match and do a quick filter
+		if(!ctype_alnum(str_replace(array(',', ' ', '-', '_', '/', '.', "'"), '', $value))) {
+			// value needs more filtering, replace all non-alphanumeric, non-single-quote and space chars
+			// See: http://php.net/manual/en/regexp.reference.unicode.php
+			// See: http://www.regular-expressions.info/unicode.html
+			$value = preg_replace('/[^[:alnum:]\pL\pN\pP\pM\p{S} \'\/]/u', ' ', $value); 
+
+			// replace multiple space characters in sequence with just 1
+			$value = preg_replace('/\s\s+/u', ' ', $value); 
+		}
+
+		// reductions and replacements
+		$reductions = array('..' => '.', './' => ' ', '  ' => ' ');
+		foreach($reductions as $f => $r) {
+			if(strpos($value, $f) === false) continue;
+			if(in_array($f, $options['whitelist'])) continue;
+			do {
+				$value = str_replace($f, $r, $value);
+			} while(strpos($value, $f) !== false);
+		}
+		
+		$value = trim($value); // trim any kind of whitespace
+		$value = trim($value, $trims); // chars to remove from begin and end 
+		$value = trim($value); // in case whitespace introduced by above
+
+		// RETURN NOW if quotes are disallowed or value is empty		
+		if(!strlen($value)) return $emptyValue;
+		if(!$useQuotes) {
+			return $hadQuotes && strpos($value, $hadQuotes) === false ? "$hadQuotes$value$hadQuotes" : $value;
+		}
+
+		// if value started quoted, we keep it quoted, otherwise we determine if it needs them
+		if(!$needsQuotes) $needsQuotes = $hadQuotes ? true : false;
+	
+		if(!$needsQuotes) {
+			// see if any always-quote character triggers are present
+			foreach($quotelist as $char) {
+				if(strpos($value, $char) === false) continue;
+				$needsQuotes = true;
+				break;
+			}
+		}
+		
+		if(!$needsQuotes) {
+			// check if string begins or ends with allowed chars that are non-alphanumeric, non-slash
+			$a = substr($value, 0, 1);
+			$b = substr($value, -1);
+			if(!ctype_alnum($a) && $a !== '/') {
+				// starts with non-alphanumeric character that is not a slash (not a beginning of path)
+				$needsQuotes = true;
+			} else if(!ctype_alnum($b) && $b !== '/') {
+				// ends with non-alphanumeric character that is not a slash (not an ending of path)
+				$needsQuotes = true;
+			} else if($a === '/') {
+				// if not a path then we prefer it quoted
+				$needsQuotes = !ctype_alnum(str_replace(array('/', '-', '_', '.'), '', $value));
+			}
+		}
+		
+		if($needsQuotes) $value = '"' . $value . '"';
+		
+		return $value;
+	}
+
+	/**
+	 * Sanitize selector value (original, version 1) 
+	 * 
+	 * @param $value
+	 * @param array $options
+	 * @return bool|mixed|string
+	 * 
+	 */
+	protected function selectorValueV1($value, $options = array()) {
+
+		$defaults = array(
+			'maxLength' => 100,
+			'useQuotes' => true,
 		);
 
 		if(is_int($options)) {
@@ -1929,7 +2562,7 @@ class Sanitizer extends Wire {
 			$options = array();
 		}
 		$options = array_merge($defaults, $options);
-	
+
 		// if given an array, convert to an OR selector string
 		if(is_array($value)) {
 			$a = array();
@@ -1940,11 +2573,11 @@ class Sanitizer extends Wire {
 			}
 			return implode('|', $a);
 		}
-		
+
 		if(!is_string($value)) $value = $this->string($value);
-		$value = trim($value); 
+		$value = trim($value);
 		$quoteChar = '"';
-		$needsQuotes = false; 
+		$needsQuotes = false;
 		$maxLength = $options['maxLength'];
 
 		if($options['useQuotes']) {
@@ -1962,6 +2595,9 @@ class Sanitizer extends Wire {
 
 			// if commas are present, then the selector needs to be quoted
 			if(strpos($value, ',') !== false) $needsQuotes = true;
+		
+			// values with parenthesis should preferably be quoted
+			if(strpos($value, '(') !== false || strpos($value, ')') !== false) $needsQuotes = true;
 
 			// disallow double quotes -- remove any if they are present
 			if(strpos($value, '"') !== false) $value = str_replace('"', '', $value);
@@ -1969,14 +2605,14 @@ class Sanitizer extends Wire {
 
 		// selector value is limited to 100 chars
 		if(strlen($value) > $maxLength) {
-			if($this->multibyteSupport) $value = mb_substr($value, 0, $maxLength, 'UTF-8'); 
-				else $value = substr($value, 0, $maxLength); 
+			if($this->multibyteSupport) $value = mb_substr($value, 0, $maxLength, 'UTF-8');
+			else $value = substr($value, 0, $maxLength);
 		}
 
 		// disallow some characters in selector values
 		// @todo technically we only need to disallow at begin/end of string
 		$value = str_replace(array('*', '~', '`', '$', '^', '|', '<', '>', '=', '[', ']', '{', '}'), ' ', $value);
-	
+
 		// disallow greater/less than signs, unless they aren't forming a tag
 		// if(strpos($value, '<') !== false) $value = preg_replace('/<[^>]+>/su', ' ', $value); 
 
@@ -1984,29 +2620,29 @@ class Sanitizer extends Wire {
 		$value = str_replace(array("\r", "\n", "#", "%"), ' ', $value);
 
 		// see if we can avoid the preg_matches and do a quick filter
-		$test = str_replace(array(',', ' ', '-'), '', $value); 
+		$test = str_replace(array(',', ' ', '-'), '', $value);
 
 		if(!ctype_alnum($test)) {
-		
+
 			// value needs more filtering, replace all non-alphanumeric, non-single-quote and space chars
 			// See: http://php.net/manual/en/regexp.reference.unicode.php
 			// See: http://www.regular-expressions.info/unicode.html
-			$value = preg_replace('/[^[:alnum:]\pL\pN\pP\pM\p{S} \'\/]/u', ' ', $value); 
+			$value = preg_replace('/[^[:alnum:]\pL\pN\pP\pM\p{S} \'\/]/u', ' ', $value);
 
 			// replace multiple space characters in sequence with just 1
-			$value = preg_replace('/\s\s+/u', ' ', $value); 
+			$value = preg_replace('/\s\s+/u', ' ', $value);
 		}
 
 		$value = trim($value); // trim any kind of whitespace
 		$value = trim($value, '+,'); // chars to remove from begin and end 
-		if(strpos($value, '!') !== false) $needsQuotes = true; 
-		
+		if(strpos($value, '!') !== false) $needsQuotes = true;
+
 		if(!$needsQuotes && $options['useQuotes'] && strlen($value)) {
-			$a = substr($value, 0, 1); 
-			$b = substr($value, -1); 
+			$a = substr($value, 0, 1);
+			$b = substr($value, -1);
 			if((!ctype_alnum($a) && $a != '/') || (!ctype_alnum($b) && $b != '/')) $needsQuotes = true;
 		}
-		if($needsQuotes) $value = $quoteChar . $value . $quoteChar; 
+		if($needsQuotes && $options['useQuotes']) $value = $quoteChar . $value . $quoteChar;
 		return $value;
 
 	}
@@ -2057,6 +2693,72 @@ class Sanitizer extends Wire {
 	public function entities1($str, $flags = ENT_QUOTES, $encoding = 'UTF-8') {
 		if(!is_string($str)) $str = $this->string($str);
 		return htmlentities($str, $flags, $encoding, false);
+	}
+
+	/**
+	 * Entity encode with support for [A]rrays and other non-string values
+	 * 
+	 * This is similar to the existing entities() method with the following differences:
+	 * 
+	 * - Array values that are strings are encoded recursively to any depth and array is returned. 
+	 * - Associative array keys (strings) are entity encoded, integer keys are left as-is.
+	 * - Objects that implement __toString() are converted to string and entity encoded. 
+	 * - Objects that do not implement __toString() are converted to a class name.
+	 * - If given an int, float, bool, array or string, that is also the type returned.
+	 * 
+	 * #pw-group-arrays
+	 * #pw-group-strings
+	 * 
+	 * @param array|string|int|float|object|bool $value
+	 * @param int $flags
+	 * @param string $encoding
+	 * @param bool $doubleEncode
+	 * @return array|string|int|float|bool
+	 * @since 3.0.194
+	 * @see Sanitizer::entitiesA1(), Sanitizer::entities()
+	 * 
+	 */
+	public function entitiesA($value, $flags = ENT_QUOTES, $encoding = 'UTF-8', $doubleEncode = true) {
+		
+		if(!is_array($value)) {
+			if(is_string($value)) {
+				// value will be encoded below
+			} else if(is_object($value)) {
+				$value = method_exists($value, '__toString') ? "$value" : get_class($value);
+			} else if(is_int($value) || is_float($value) || is_bool($value)) {
+				// leave int, float, bool values as they are
+				return $value; 
+			}
+			return $this->entities($value, $flags, $encoding, $doubleEncode);
+		}
+		
+		$a = array();
+		
+		foreach($value as $k => $v) {
+			if(is_string($k)) $k = $this->entities($k, $flags, $encoding, $doubleEncode);
+			if(isset($a[$k])) continue;
+			$a[$k] = $this->entitiesA($v, $flags, $encoding, $doubleEncode);
+		}
+		
+		return $a;
+	}
+
+	/**
+	 * Same as entitiesA() but does not double encode
+	 * 
+	 * #pw-group-arrays
+	 * #pw-group-strings
+	 * 
+	 * @param array|string|int|float|object|bool $value
+	 * @param int $flags
+	 * @param string $encoding
+	 * @return array|string|int|float|bool
+	 * @since 3.0.194
+	 * @see Sanitizer::entitiesA(), Sanitizer::entities1()
+	 * 
+	 */
+	public function entitiesA1($value, $flags = ENT_QUOTES, $encoding = 'UTF-8') {
+		return $this->entitiesA($value, $flags, $encoding, false);
 	}
 	
 	/**
@@ -2110,16 +2812,20 @@ class Sanitizer extends Wire {
 			'encoding' => 'UTF-8',
 			'doubleEncode' => true,
 			'allowBrackets' => false, // allow [bracket] tags?
-			'allow' => array('a', 'strong', 'em', 'code', 's', 'span', 'u', 'small', 'i'),
+			'allow' => array('a', 'strong', 'em', 'code', 's', 'span', 'u', 'small', 'i', 'br'),
 			'disallow' => array(),
 			'linkMarkup' => '<a href="{url}" rel="noopener noreferrer nofollow" target="_blank">{text}</a>',
+			'escapableChars' => array('*', '[', ']', '(', ')', '`', '_', '~'), // for basic markdown or brackets modes
 		);
 
 		if($options === true || (is_int($options) && $options > 0)) $defaults['fullMarkdown'] = $options;
 		if(!is_array($options)) $options = array();
-		$options = array_merge($defaults, $options); 
+		$options = array_merge($defaults, $options);
+		$findReplace = array();
+		$str = $this->string($str);
 
 		if($options['fullMarkdown']) {
+			// full markdown
 			
 			$markdown = $this->wire('modules')->get('TextformatterMarkdownExtra');
 			if(is_int($options['fullMarkdown'])) {
@@ -2130,15 +2836,21 @@ class Sanitizer extends Wire {
 			$markdown->format($str);
 			
 		} else {
+			// basic (inline) markdown
+			
+			if(strpos($str, '\\') !== false) {
+				// allow certain escaped markdown characters to be ignored by our regexps i.e. "\*" or "\[", etc.
+				$findReplace = $this->getTextTools()->findReplaceEscapeChars($str, $options['escapableChars']); 
+			}
 
 			$str = $this->entities($str, $options['flags'], $options['encoding'], $options['doubleEncode']);
-
+			
 			if(strpos($str, '](') && in_array('a', $options['allow']) && !in_array('a', $options['disallow'])) {
 				// link
 				$linkMarkup = str_replace(array('{url}', '{text}'), array('$2', '$1'), $options['linkMarkup']);
-				$str = preg_replace('/\[(.+?)\]\(([^)]+)\)/', $linkMarkup, $str);
+				$str = preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', $linkMarkup, $str);
 			}
-
+			
 			if(strpos($str, '**') !== false && in_array('strong', $options['allow']) && !in_array('strong', $options['disallow'])) {
 				// strong
 				$str = preg_replace('/\*\*(.*?)\*\*/', '<strong>$1</strong>', $str);
@@ -2160,34 +2872,73 @@ class Sanitizer extends Wire {
 			}
 		}
 
-		if($options['allowBrackets'] && strpos($str, '[/')) {
-			// support [bracketed] inline-level tags, optionally with id "#" or class "." attributes (ascii-only)
-			// example: [span.detail]some text[/span] or [strong#someid.someclass]text[/strong] or [em.class1.class2]text[/em]
-			$tags = implode('|', $options['allow']);
-			$reps = array();
-			if(preg_match_all('!\[(' . $tags . ')((?:[.#][-_a-zA-Z0-9]+)*)\](.*?)\[/\\1\]!', $str, $matches)) {
-				foreach($matches[0] as $key => $full) {
-					$tag = $matches[1][$key];
-					$attr = $matches[2][$key];
-					$text = $matches[3][$key];
-					if(in_array($tag, $options['disallow']) || $tag == 'a') continue;
-					$class = '';
-					$id = '';
-					if(strlen($attr)) {
-						foreach(explode('.', $attr) as $c) {
-							if(strpos($c, '#') !== false) list($c, $id) = explode('#', $c, 2);
-							if(!empty($c)) $class .= "$c ";
-						}
-					}
-					$reps[$full] = "<$tag" . ($id ? " id='$id'" : '') . ($class ? " class='$class'" : '') . ">$text</$tag>";
-				}
-			}
-			if(count($reps)) $str = str_replace(array_keys($reps), array_values($reps), $str);
+		if($options['allowBrackets']) {
+			$str = $this->bracketTagsToHtml($str, $options);
+		}
+		
+		if(count($findReplace)) {
+			$str = str_replace(array_keys($findReplace), array_values($findReplace), $str);
 		}
 		
 		return $str;
 	}
 
+	/**
+	 * Convert HTML bracket tags [tag]...[/tag] to HTML - helper method for entitiesMarkdown()
+	 * 
+	 * @param string $str String containing bracket tags, should be entity encoded ahead of time
+	 * @param array $options
+	 * @return string
+	 * 
+	 */
+	protected function bracketTagsToHtml($str, array $options) {
+
+		if(strpos($str, '[') === false || strpos($str, ']') === false) return $str;
+		
+		if(empty($options['allow'])) return $str;
+
+		if(!isset($options['disallow'])) $options['disallow'] = array();
+
+		// bracket tags that require no closing bracket
+		$singletons = array('br', 'hr', 'wbr');
+		foreach($singletons as $tag) {
+			if(strpos($str, "[$tag") === false) continue;
+			if(!in_array($tag, $options['allow'])) continue;
+			if(in_array($tag, $options['disallow'])) continue;
+			$str = str_replace(array("[$tag]", "[$tag/]", "[$tag /]"), "<$tag />", $str);
+		}
+	
+		// all other bracket tags require a closing bracket
+		if(!strpos($str, '[/')) return $str;
+		
+		// support [bracketed] inline-level tags, optionally with id "#" or class "." attributes (ascii-only)
+		// example: [span.detail]some text[/span] or [strong#someid.someclass]text[/strong] or [em.class1.class2]text[/em]
+		$tags = implode('|', $options['allow']);
+		$reps = array();
+		
+		if(preg_match_all('!\[(' . $tags . ')((?:[.#][-_a-zA-Z0-9]+)*)\](.*?)\[/\\1\]!', $str, $matches)) {
+			foreach($matches[0] as $key => $full) {
+				$tag = $matches[1][$key];
+				$attr = $matches[2][$key];
+				$text = $matches[3][$key];
+				if(in_array($tag, $options['disallow']) || $tag == 'a') continue;
+				$class = '';
+				$id = '';
+				if(strlen($attr)) {
+					foreach(explode('.', $attr) as $c) {
+						if(strpos($c, '#') !== false) list($c, $id) = explode('#', $c, 2);
+						if(!empty($c)) $class .= "$c ";
+					}
+				}
+				$reps[$full] = "<$tag" . ($id ? " id='$id'" : '') . ($class ? " class='$class'" : '') . ">$text</$tag>";
+			}
+		}
+		
+		if(count($reps)) $str = str_replace(array_keys($reps), array_values($reps), $str);
+		
+		return $str;
+	}
+	
 	/**
 	 * Remove entity encoded characters from a string. 
 	 * 
@@ -2299,6 +3050,7 @@ class Sanitizer extends Wire {
 	 *
 	 */
 	public function removeNewlines($str, $replacement = ' ') {
+		$str = $this->string($str);
 		return str_replace(array("\r\n", "\r", "\n"), $replacement, $str);
 	}
 
@@ -2332,6 +3084,7 @@ class Sanitizer extends Wire {
 		} else {
 			$options = array_merge($defaults, $options);
 		}
+		$str = $this->string($str);
 		if($options['html'] && strpos($str, '&') === false) $options['html'] = false;
 		$whitespace = $this->getWhitespaceArray($options['html']); 
 		foreach($options['allow'] as $c) {
@@ -2438,7 +3191,7 @@ class Sanitizer extends Wire {
 	}
 
 	/**
-	 * Trim of all known UTF-8 whitespace types (or given chars) from beginning and ending of string
+	 * Trim off all known UTF-8 whitespace types (or given chars) from beginning and ending of string
 	 * 
 	 * Like PHP’s trim() but works with multibyte strings and recognizes all types of UTF-8 whitespace
 	 * as well as HTML whitespace entities. This method also optionally accepts an array for $chars argument
@@ -2450,32 +3203,44 @@ class Sanitizer extends Wire {
 	 * #pw-group-strings
 	 * 
 	 * @param string $str
-	 * @param string|array $chars Characters to trim or omit (blank string) for all known whitespace (including UTF-8) and HTML-entity whitespace. 
+	 * @param string|array $chars Array or string of chars to trim, or omit (blank string) for all whitespace (includes UTF-8 and HTML-entity whitespace too). 
+	 * @param string $method Trim method, one of "trim" (both), "rtrim" (right-only) or "ltrim" (left-only). Or just "t", "r", "l" is also fine. 3.0.168+
 	 * @return string
 	 * @since 3.0.124
 	 * 
 	 */
-	public function trim($str, $chars = '') {
-	
+	public function trim($str, $chars = '', $method = 'trim') {
+
+		$str = $this->string($str);
 		$tt = $this->getTextTools();
 		$len = $tt->strlen($str);
-		if(!$len) return $str;
-		if(is_array($chars) && !count($chars)) $chars = '';
+		
+		if(!$len) return '';
+
+		$method = strtoupper($method[0]);  // T, R or L
 		$trims = array();
+		$str2 = '';
+		
+		if(is_array($chars) && !count($chars)) $chars = '';
 
 		// setup trim
 		if($chars === '') {
 			// default whitespace characters
 			$trims = $this->getWhitespaceArray(true);
 			// let PHP default whitespace trim run first
-			$str = trim($str);
+			switch($method) {
+				case 'R': $str = rtrim($str); break;
+				case 'L': $str = ltrim($str); break;
+				default: $str = trim($str); break;
+			}
+			$str2 = $str; // remember what it looked like here in $str2
 			
 		} else {
 			// user-specified characters
 			if(is_array($chars)) {
 				$trims = $chars;
 			} else {
-				for($n = 0; $n < $tt->strlen($str); $n++) {
+				for($n = 0; $n < $tt->strlen($chars); $n++) {
 					$trim = $tt->substr($chars, $n, 1);
 					$trimLen = $tt->strlen($trim);
 					if($trimLen) $trims[] = $trim;
@@ -2500,15 +3265,17 @@ class Sanitizer extends Wire {
 				// at this point we know the trim character is present somewhere in the string
 				$trimLen = $tt->strlen($trim);
 				
-				// while this trim character matches at beginning of string, remove it
-				while($trimPos === 0) {
-					$str = $tt->substr($str, $trimLen);
-					$trimPos = $tt->strpos($str, $trim);
-					$numRemovedStart++;
+				// while this trim character matches at beginning of string, remove it (left trim)
+				if($method !== 'R') {
+					while($trimPos === 0) {
+						$str = $tt->substr($str, $trimLen);
+						$trimPos = $tt->strpos($str, $trim);
+						$numRemovedStart++;
+					}
 				}
 				
-				// trim from end
-				if($trimPos > 0) do {
+				// trim from end (right trim)
+				if($trimPos > 0 && $method !== 'L') do {
 					$x = 0; // qty removed only in this do/while iteration
 					$trimPos = $tt->strrpos($str, $trim);
 					if($trimPos === false) break;
@@ -2528,6 +3295,16 @@ class Sanitizer extends Wire {
 			$strLen = $tt->strlen($str);
 			
 		} while($numRemovedStart + $numRemovedEnd > 0 && $strLen > 0);
+	
+		// if a default behavior trim and $str was modified by trimming UTF-8 or entities
+		// whitespaces then follow-up with a regular PHP trim, just in case
+		if($chars === '' && $str !== $str2) {
+			switch($method) {
+				case 'R': $str = rtrim($str); break;
+				case 'L': $str = ltrim($str); break;
+				default: $str = trim($str); break;
+			}
+		}
 		
 		return $str;
 	}
@@ -2604,6 +3381,8 @@ class Sanitizer extends Wire {
 	 *   'more' => '…'
 	 * ]);
 	 * ~~~~~~~
+	 * 
+	 * #pw-group-strings
 	 *
 	 * @param string $str String to truncate
 	 * @param int|array $maxLength Maximum length of returned string, or specify $options array here.
@@ -2627,6 +3406,31 @@ class Sanitizer extends Wire {
 	 *
 	 */
 	public function truncate($str, $maxLength = 300, $options = array()) {
+		$str = $this->string($str);
+		return $this->getTextTools()->truncate($str, $maxLength, $options);
+	}
+
+	/**
+	 * Truncate string to given maximum length without breaking words and with no added visible extras
+	 *
+	 * This is a shortcut to the truncate() sanitizer, sanitizing to nearest word with the `more` option 
+	 * disabled and the `collapseLinesWith` set to 1 space (rather than ellipsis).
+	 * 
+	 * #pw-group-strings
+	 * 
+	 * @param string $str String to truncate
+	 * @param int|array $maxLength Maximum allowed length in characters, or substitute $options argument here
+	 * @param array $options See options for truncate() method or specify `type` option (word, punctuation, sentence, block).
+	 * @return string
+	 * @since 3.0.157
+	 * 
+	 */
+	public function trunc($str, $maxLength = 300, $options = array()) {
+		$str = $this->string($str);
+		if(is_array($maxLength)) $options = $maxLength;
+		if(!isset($options['type'])) $options['type'] = 'word';
+		if(!isset($options['more'])) $options['more'] = '';
+		if(!isset($options['collapseLinesWith'])) $options['collapseLinesWith'] = ' ';
 		return $this->getTextTools()->truncate($str, $maxLength, $options);
 	}
 
@@ -2639,27 +3443,39 @@ class Sanitizer extends Wire {
 	 * #pw-group-strings
 	 * 
 	 * @param string|array $value String or array containing strings
+	 * @param array $options Options to modify behavior, 3.0.169+ only:
+	 *  - `replaceWith` (string): Replace MB4+ characters with this character, may not be blank (default='�')
+	 *  - `version` (int): Replacement method version (default=2)
 	 * @return string|array|mixed 
 	 * 
 	 */
-	public function removeMB4($value) {
-		if(empty($value)) return $value;
+	public function removeMB4($value, array $options = array()) {
+		$defaults = array(
+			'replaceWith' => "\xEF\xBF\xBD", // Default unicode replacement character: U+FFFD aka �
+			'version' => 2, 
+		);
+		$options = array_merge($defaults, $options);
+		if($options['replaceWith'] === '') $options['replaceWidth'] = $defaults['replaceWith'];
 		if(is_array($value)) {
+			if(!count($value)) return array();
 			// process array recursively, looking for strings to convert
 			foreach($value as $key => $val) {
-				if(empty($val)) continue;
-				if(is_string($val) || is_array($val)) $value[$key] = $this->removeMB4($val);
+				if(is_string($val) || is_array($val)) $value[$key] = $this->removeMB4($val, $options);
 			}
 		} else if(is_string($value)) {
-			if(strlen($value) > 3 && max(array_map('ord', str_split($value))) >= 240) {
-				// string contains 4-byte characters
-				$regex =
-					'!(?:' .
-					'\xF0[\x90-\xBF][\x80-\xBF]{2}' .
-					'|[\xF1-\xF3][\x80-\xBF]{3}' .
-					'|\xF4[\x80-\x8F][\x80-\xBF]{2}' .
-					')!s';
-				$value = preg_replace($regex, '', $value);
+			if($options['version'] >= 2) {
+				$value = preg_replace('/[\x{10000}-\x{10FFFF}]/u', $options['replaceWith'], $value);
+			} else {
+				if(strlen($value) > 3 && max(array_map('ord', str_split($value))) >= 240) {
+					// string contains 4-byte characters
+					$regex =
+						'!(?:' .
+						'\xF0[\x90-\xBF][\x80-\xBF]{2}' .
+						'|[\xF1-\xF3][\x80-\xBF]{3}' .
+						'|\xF4[\x80-\x8F][\x80-\xBF]{2}' .
+						')!s';
+					$value = preg_replace($regex, $options['replaceWith'], $value);
+				}
 			}
 		} else {
 			// not a string or an array, leave as-is
@@ -2785,6 +3601,7 @@ class Sanitizer extends Wire {
 		);
 		
 		$options = array_merge($defaults, $options);
+		$value = $this->string($value);
 		$allow = $options['allow'] . ($options['allowUnderscore'] ? '_' : ''); 
 		$needsWork = true;
 		
@@ -2924,7 +3741,9 @@ class Sanitizer extends Wire {
 	 *
 	 */
 	public function string($value, $sanitizer = null) {
-		if(is_object($value)) {
+		if(is_string($value)) {
+			if($sanitizer === null) return $value;
+		} else if(is_object($value)) {
 			if(method_exists($value, '__toString')) {
 				$value = (string) $value;
 			} else {
@@ -2936,12 +3755,14 @@ class Sanitizer extends Wire {
 			$value = $value ? "1" : "";
 		} else if(is_array($value)) {
 			$value = "array-" . count($value);
-		} else if(!is_string($value)) {
+		} else {
 			$value = (string) $value;
 		}
-		if(!is_null($sanitizer) && is_string($sanitizer) && (method_exists($this, $sanitizer) || method_exists($this, "___$sanitizer"))) {
-			$value = $this->$sanitizer($value);
-			if(!is_string($value)) $value = (string) $value;
+		if($sanitizer && is_string($sanitizer)) { 
+			if(method_exists($this, $sanitizer) || method_exists($this, "___$sanitizer")) {
+				$value = $this->$sanitizer($value);
+				if(!is_string($value)) $value = (string) $value;
+			}
 		}
 		return $value;
 	}
@@ -2970,7 +3791,7 @@ class Sanitizer extends Wire {
 	 */
 	public function date($value, $format = null, array $options = array()) {
 		$defaults = array(
-			'returnFormat' => $format, // date format to return in, if different from $dateFormat
+			'returnFormat' => $format, // date format to return in, if different from $format
 			'min' => '', // Minimum date allowed (in $dateFormat format, or a unix timestamp) 
 			'max' => '', // Maximum date allowed (in $dateFormat format, or a unix timestamp)
 			'default' => null, // Default value, if date didn't resolve
@@ -2978,13 +3799,14 @@ class Sanitizer extends Wire {
 		);
 		$options = array_merge($defaults, $options);
 		$datetime = $this->wire('datetime');
-		$_value = trim($value); // original value string
+		$iso8601 = 'Y-m-d H:i:s';
+		$_value = trim($this->string($value)); // original value string
 		if(empty($value)) return $options['default'];
 		if(!is_string($value) && !is_int($value)) $value = $this->string($value);
 		if(ctype_digit("$value")) {
 			// value is in unix timestamp format
 			// make sure it resolves to a valid date
-			$value = strtotime(date('Y-m-d H:i:s', (int) $value));
+			$value = strtotime(date($iso8601, (int) $value));
 		} else {
 			/** @var WireDateTime $datetime */
 			$value = $datetime->stringToTimestamp($value, $format); 
@@ -3008,6 +3830,62 @@ class Sanitizer extends Wire {
 		}
 		if(!empty($options['returnFormat'])) $value = wireDate($options['returnFormat'], $value);
 		return empty($value) ? null : $value;
+	}
+
+	/**
+	 * Sanitize as language textdomain
+	 * 
+	 * #pw-group-strings
+	 * 
+	 * @param string $value
+	 * @return string
+	 * @since 3.0.181
+	 * 
+	 */
+	public function textdomain($value) {
+		
+		$value = $this->line($value, 1024); 
+		$value = trim(strtolower($value));
+		$slash = false;
+		$dot = false;
+		
+		if(!strlen($value)) return $value;
+		
+		if(strpos($value, '\\') !== false) {
+			$value = str_replace('\\', '/', $value);
+		}
+		
+		if(strpos($value, '/') !== false) {
+			$slash = true;
+			$config = $this->wire()->config;
+			$value = str_replace(ltrim($config->paths->root, '/'), '', $value);
+			$value = trim($value, '/');
+		}
+		
+		if(strpos($value, '.') !== false) {
+			$dot = true;
+			while(strpos($value, '..') !== false) {
+				$value = str_replace('..', '.', $value);
+			}
+		}
+
+		if($dot) {
+			$value = str_replace(array('/.', './', '-.', '.-'), array('/', '/', '.', '.'), $value);
+		}
+		
+		if($slash || $dot) {
+			$value = str_replace(array('/', '.'), array('--', '-'), $value);
+		}
+		
+		while(strpos($value, '---') !== false) {
+			$value = str_replace('---', '--', $value);
+		}
+		
+		if(!ctype_alnum(str_replace(array('-', '_'), '', $value))) {
+			$value = preg_replace('/[^-_a-z0-9]/', '_', $value);
+		}
+		
+		return trim($value, '-');
 	}
 
 	/**
@@ -3193,6 +4071,15 @@ class Sanitizer extends Wire {
 	/**
 	 * Sanitize to floating point value
 	 * 
+	 * Values for `getString` argument:
+	 * 
+	 * - `false` (bool): do not return string value (default). 3.0.171+
+	 * - `true` (bool): locale aware floating point number string. 3.0.171+
+	 * - `f` (string): locale aware floating point number string (same as true). 3.0.193+
+	 * - `F` (string): non-locale aware floating point number string. 3.0.193+
+	 * - `e` (string): lowercase scientific notation (e.g. 1.2e+2). 3.0.193+
+	 * - `E` (string): uppercase scientific notation (e.g. 1.2E+2). 3.0.193+
+	 * 
 	 * #pw-group-numbers
 	 * 
 	 * @param float|string|int $value
@@ -3202,7 +4089,8 @@ class Sanitizer extends Wire {
 	 * 	- `blankValue` (null|int|string|float): Value to return (whether float or non-float) if provided $value is an empty non-float (default=0.0)
 	 * 	- `min` (float|null): Minimum allowed value, excluding blankValue (default=null)
 	 * 	- `max` (float|null): Maximum allowed value, excluding blankValue (default=null)
-	 * @return float
+	 *  - `getString (bool|string): Return a string rather than float value? 3.0.171+ (default=false). See value options in method description. 
+	 * @return float|string
 	 * 
 	 */
 	public function float($value, array $options = array()) {
@@ -3213,20 +4101,37 @@ class Sanitizer extends Wire {
 			'blankValue' => 0.0, // Value to return (whether float or non-float) if provided $value is an empty non-float (default=0.0)
 			'min' => null, // Minimum allowed value (excluding blankValue)
 			'max' => null, // Maximum allowed value (excluding blankValue)
+			'getString' => false, // Return a string rather than float value? bool or f, F, e, E
 		);
 		
 		$options = array_merge($defaults, $options);
 	
 		if($value === null || $value === false) return $options['blankValue'];
 		if(!is_float($value) && !is_string($value)) $value = $this->string($value);
+		$e = 0;
 
 		if(is_string($value)) {
 			
 			$str = trim($value);
 			$prepend = '';
-			if(strpos($str, '-') === 0) {
+			$append = '';
+			
+			$c = substr($str, 0, 1);
+			while($c !== '' && $c !== '-' && $c !== '.' && $c !== ',' && !ctype_digit($c)) {
+				// trim off leading non-number content like currency symbols, names, etc.
+				$str = ltrim($str, $c);
+				$c = substr($str, 0, 1);
+			}
+		
+			if($c === '-') {
 				$prepend = '-';
 				$str = ltrim($str, '-');
+			}
+
+			if(stripos($str, 'E') && preg_match('/^([-]?[0-9., ]*\d)(E[-+]?\d+)/i', $str, $m)) {
+				$str = $m[1];
+				$append = $m[2];
+				$e = ((int) ltrim($append, '-+eE')); 
 			}
 		
 			if(!strlen($str)) return $options['blankValue'];
@@ -3259,7 +4164,7 @@ class Sanitizer extends Wire {
 				}
 
 			} else {
-				$value = preg_replace('/[^0-9]/', '', $str);
+				if(!ctype_digit("$value")) $value = preg_replace('/[^0-9]/', '', $str);
 			}
 
 			if($pos !== null) {
@@ -3270,13 +4175,37 @@ class Sanitizer extends Wire {
 					preg_replace('/[^0-9]/', '', substr($str, $pos + 1));
 			}
 
-			$value = floatval($prepend . $value);
+			$value = $prepend . $value . $append;
+			if(!$options['getString']) $value = floatval($value);
+			
+		} else if(is_float($value)) {
+			$str = strtoupper("$value"); 
+			if(strpos($str, 'E')) $e = (int) ltrim(stristr("$str", 'E'), 'E-+'); 
+		}	
+		
+		if($options['precision'] === null && $e) {
+			$options['precision'] = $e;
+			if(strpos("$value", '.') !== false && preg_match('!\.(\d+)!', $value, $m)) {
+				$options['precision'] += strlen($m[1]);
+			}
 		}
 		
-		if(!is_float($value)) $value = (float) $value;
-		if(!is_null($options['min']) && $value < $options['min']) $value = $options['min'];
-		if(!is_null($options['max']) && $value > $options['max']) $value = $options['max'];
-		if(!is_null($options['precision'])) $value = round($value, (int) $options['precision'], (int) $options['mode']);
+		if(!$options['getString'] && !is_float($value)) $value = (float) $value;
+		if(!is_null($options['min']) && ((float) $value) < ((float) $options['min'])) $value = $options['min'];
+		if(!is_null($options['max']) && ((float) $value) > ((float) $options['max'])) $value = $options['max'];
+		if(!is_null($options['precision'])) $value = round((float) $value, (int) $options['precision'], (int) $options['mode']);
+		$value = (float) $value;
+		
+		if($options['getString']) {
+			$f = $options['getString'];
+			$f = is_string($f) && in_array($f, array('f', 'F', 'e', 'E')) ? $f : 'f';
+			if($options['precision'] === null) {
+				$value = stripos("$value", 'E') ? rtrim(sprintf("%.15$f", (float) $value), '0') : "$value";
+			} else {
+				$value = rtrim(sprintf("%.$options[precision]$f", (float) $value), '0');
+			}
+			$value = rtrim($value, '.');
+		}
 		
 		return $value;
 	}
@@ -3287,35 +4216,58 @@ class Sanitizer extends Wire {
 	 */
 
 	/**
-	 * Sanitize array or CSV string to array of strings
+	 * Sanitize array or CSV string to array of values, optionally sanitized by given method
 	 *
-	 * If string specified, string delimiter may be pipe ("|"), or comma (","), unless overridden with the 'delimiter'
-	 * or 'delimiters' option. 
+	 * If given a string, delimiter may be pipe ("|"), or comma (","), unless overridden with the `delimiter`
+	 * or `delimiters` options. 
 	 * 
 	 * #pw-group-arrays
 	 *
-	 * @param array|string|mixed $value Accepts an array or CSV string. If given something else, it becomes first item in array.
-	 * @param string $sanitizer Optional Sanitizer method to apply to items in the array (default=null, aka none).
+	 * @param array|string|mixed $value Accepts an array or CSV string. 
+	 *   If given something else, it becomes first item in array.
+	 * @param string|array $sanitizer Sanitizer method to apply to items in the array or omit/null for none,
+	 *   or in 3.0.165+ optionally substitute the $options argument here instead (default=null).
 	 * @param array $options Optional modifications to default behavior:
-	 * 	`maxItems` (int): Maximum items allowed in array (default=0, which means no limit)  
-	 * 	The following options are only used if the provided $value is a string: 
+	 * 	- `maxItems` (int): Maximum items allowed in each array (default=0, which means no limit)
+	 *  - `maxDepth` (int): Max nested array depth (default=0, which means no nesting allowed) Since 3.0.160
+	 *  - `trim` (bool): Trim whitespace from front/back of each string item in array? (default=true) Since 3.0.190 
+	 * 	- `sanitizer` (string): Optionally specify sanitizer for array values as option rather than argument (default='') Since 3.0.165
+	 * 	- `keySanitizer` (string): Optionally sanitize associative array keys with this method (default='') Since 3.0.167
+	 * 	- The following options are only used if the provided $value is a string: 
+	 *  - `csv` (bool): Allow conversion of delimited string to array? (default=true) Since 3.0.165
 	 * 	- `delimiter` (string): Single delimiter to use to identify CSV strings. Overrides the 'delimiters' option when specified (default=null)
 	 * 	- `delimiters` (array): Delimiters to identify CSV strings. First found delimiter will be used, default=array("|", ",")
-	 * 	- `enclosure` (string): Enclosure to use for CSV strings (default=double quote, i.e. ")
+	 * 	- `enclosure` (string): Enclosure to use for CSV strings (default=double quote, i.e. `"`)
 	 * @return array
 	 * @throws WireException if an unknown $sanitizer method is given
 	 *
 	 */
 	public function ___array($value, $sanitizer = null, array $options = array()) {
+		
+		static $depth = 0;
+		
 		$defaults = array(
+			'maxItems' => 0,
+			'maxDepth' => 0,
+			'csv' => true,
 			'delimiter' => null, 
 			'delimiters' => array('|', ','),
-			'enclosure' => '"', 
-			'maxItems' => 0, 
+			'enclosure' => '"',
+			'trim' => true, 
+			'sanitizer' => null, 
+			'keySanitizer' => null,
 		);
+		
+		if(is_array($sanitizer) && empty($options)) list($options, $sanitizer) = array($sanitizer, null);
+		if(empty($sanitizer) && !empty($options['sanitizer'])) $sanitizer = $options['sanitizer'];
+		
 		$options = array_merge($defaults, $options);
-		if(!is_array($value)) {
-			if(is_null($value)) return array();
+		$clean = array();
+		
+		if($value === null) {
+			return array();
+			
+		} else if(!is_array($value)) {
 			if(is_object($value)) {
 				// value is object: convert to string or array
 				if(method_exists($value, '__toString')) {
@@ -3326,41 +4278,110 @@ class Sanitizer extends Wire {
 			}
 			if(is_string($value)) {
 				// value is string
-				$hasDelimiter = null;
-				$delimiters = is_null($options['delimiter']) ? $options['delimiters'] : array($options['delimiter']);
-				foreach($delimiters as $delimiter) {
-					if(strpos($value, $delimiter)) {
-						$hasDelimiter = $delimiter;
-						break;
+				if($options['trim']) $value = trim($value);
+				if(!strlen($value)) {
+					return array();
+				} else if($options['csv']) {
+					$hasDelimiter = null;
+					$delimiters = is_null($options['delimiter']) ? $options['delimiters'] : array($options['delimiter']);
+					foreach($delimiters as $delimiter) {
+						if(strpos($value, $delimiter)) {
+							$hasDelimiter = $delimiter;
+							break;
+						}
+					}
+					if($hasDelimiter !== null) {
+						$value = str_getcsv($value, $hasDelimiter, $options['enclosure']);
+					} else {
+						$value = array($value);
 					}
 				}
-				if($hasDelimiter !== null) {
-					$value = str_getcsv($value, $hasDelimiter, $options['enclosure']);
+			}	
+			if(!is_array($value)) {
+				$value = array($value);
+			}	
+		}
+
+		$depth++;
+		foreach($value as $k => $v) {
+			if(is_array($v)) {
+				if($depth <= $options['maxDepth']) {
+					// sanitize nested array recursively
+					$value[$k] = $this->___array($v, $sanitizer, $options);
 				} else {
-					$value = array($value);
+					// remove nested array
+					unset($value[$k]);
+				}
+			} else if(is_string($v)) {
+				if($options['trim']) $value[$k] = trim($v);
+			}
+		}
+		$depth--;
+		
+		if($options['maxItems'] && count($value) > $options['maxItems']) {
+			$value = array_slice($value, 0, abs($options['maxItems']));	
+		}
+	
+		$keySanitizer = $options['keySanitizer'];
+		
+		if($sanitizer || $keySanitizer) {
+			foreach(array($sanitizer, $keySanitizer) as $method) {
+				if($method && !method_exists($this, $method) && !method_exists($this, "___$method")) {
+					throw new WireException("Unknown sanitizer method: $method");
 				}
 			}
-			if(!is_array($value)) $value = array($value);
-		}
-		if($options['maxItems']) {
-			if(count($value) > $options['maxItems']) $value = array_slice($value, 0, abs($options['maxItems']));	
-		}
-		$clean = array();
-		if(!is_null($sanitizer)) {
-			if(!method_exists($this, $sanitizer) && !method_exists($this, "___$sanitizer")) {
-				throw new WireException("Unknown sanitizer method: $sanitizer");
-			}
 			foreach($value as $k => $v) {
-				$clean[$k] = $this->$sanitizer($v);
+				if($keySanitizer && !is_int($k)) {
+					$k = $this->$keySanitizer($k);
+					if(!strlen($k)) continue;
+				}
+				if($options['maxDepth'] > 0 && is_array($v)) {
+					$clean[$k] = $v; // array already sanitized by recursive call
+				} else {
+					$clean[$k] = $this->$sanitizer($v);
+				}
 			}
 		} else {
 			$clean = $value;
 		}
-		return array_values($clean);
+		
+		return $keySanitizer ? $clean : array_values($clean);
+	}
+
+	/**
+	 * Simply sanitize value to array with no conversions
+	 * 
+	 * This is the same as the `array()` sanitizer except that it does not attempt to convert 
+	 * delimited/csv strings to arrays. Meaning, a delimited string would simply become an array
+	 * with the first item being that delimited string. 
+	 * 
+	 * #pw-group-arrays
+	 * 
+	 * @param mixed $value
+	 * @param array $options
+	 * 	- `maxItems` (int): Maximum items allowed in each array (default=0, which means no limit)
+	 *  - `maxDepth` (int): Max nested array depth (default=0, which means no nesting allowed)
+	 * 	- `sanitizer` (string): Optionally specify sanitizer method name to apply to items (default='')
+	 * 	- `keySanitizer` (string): Optionally sanitize associative array keys with this method (default='') Since 3.0.167
+	 * @return array
+	 * @throws WireException
+	 * @since 3.0.165
+	 * 
+	 */
+	public function arrayVal($value, $options = array()) {
+		$defaults = array(
+			'maxItems' => 0, 
+			'maxDepth' => 0,
+			'sanitizer' => is_string($options) ? $options : null,
+			'keySanitizer' => null,
+			'csv' => false,
+		);
+		$options = is_array($options) ? array_merge($defaults, $options) : $defaults;
+		return $this->___array($value, $options);
 	}
 	
 	/**
-	 * Sanitize array or CSV string to array of unsigned integers (or signed if specified $min is less than 0)
+	 * Sanitize array or CSV string to array of unsigned integers (or signed integers if specified $min is less than 0)
 	 *
 	 * If string specified, string delimiter may be comma (","), or pipe ("|"), or you may override with the 'delimiter' option.
 	 * 
@@ -3368,21 +4389,80 @@ class Sanitizer extends Wire {
 	 * #pw-group-numbers
 	 *
 	 * @param array|string|mixed $value Accepts an array or CSV string. If given something else, it becomes first value in array.
-	 * @param array $options Optional options (see `Sanitizer::array()` and `Sanitizer::int()` methods for options), plus these two: 
+	 * @param array|bool $options Optional options (see `Sanitizer::array()` and `Sanitizer::int()` methods for options), plus these two: 
 	 * 	- `min` (int): Minimum allowed value (default=0)
 	 * 	- `max` (int): Maximum allowed value (default=PHP_INT_MAX)
+	 *  - `strict` (bool): Remove rather than convert any values that are not all digits or fall outside min/max range? (default=false) Since 3.0.157+
+	 * 	- `maxItems` (int): Maximum items allowed in each array (default=0, which means no limit)
+	 *  - `maxDepth` (int): Max nested array depth (default=0, which means no nesting allowed) Since 3.0.160
+	 *  - You may specify boolean true for $options argument to use just the `strict` option. (3.0.157+)
+	 * 	- The following options are only used if the provided $value is a string:
+	 *  - `csv` (bool): Allow conversion of delimited string to array? (default=true) Since 3.0.165
+	 * 	- `delimiter` (string): Single delimiter to use to identify CSV strings. Overrides the 'delimiters' option when specified (default=null)
+	 * 	- `delimiters` (array): Delimiters to identify CSV strings. First found delimiter will be used, default=array("|", ",")
+	 * 	- `enclosure` (string): Enclosure to use for CSV strings (default=double quote, i.e. `"`)
 	 * @return array Array of integers
 	 *
 	 */
-	public function intArray($value, array $options = array()) {
+	public function intArray($value, $options = array()) {
+		if(is_bool($options)) {
+			$options = array('strict' => $options);
+		} else if(!is_array($options)) {
+			$options = array();
+		}
 		if(!is_array($value)) {
 			$value = $this->___array($value, null, $options);
 		}
 		$clean = array();
+		$strict = isset($options['strict']) ? $options['strict'] : false;
 		foreach($value as $k => $v) {
-			$clean[$k] = $this->int($v, $options);
+			if($strict) {
+				$isInt = is_int($v);
+				$isStr = !$isInt && is_string($v); 
+				if(!$isInt && !$isStr) continue;
+				if($isStr && !ctype_digit($v)) continue;
+				if($v === '') continue;
+				$vBefore = (int) $v;
+				$vAfter = $this->int($v, $options);
+				if($vBefore === $vAfter) $clean[] = $vAfter;
+			} else {
+				$clean[] = $this->int($v, $options);
+			}
 		}
-		return array_values($clean);
+		return $clean;
+	}
+
+	/**
+	 * Sanitize array to be all unsigned integers with no conversions
+	 * 
+	 * This is the same as the `intArray()` method except for the following: 
+	 * 
+	 *  - The `csv` delimited string conversion option is disabled by default.
+	 *  - The `strict` option default is true, meaning non-integer numbers or those outside allowed range 
+	 *    are removed rather than converted. 
+	 *
+	 * #pw-group-arrays
+	 * #pw-group-numbers
+	 *
+	 * @param array|string|mixed $value Accepts an array or CSV string. If given something else, it becomes first value in array.
+	 * @param array|bool $options Options to modify behavior or specify bool for `strict` option:
+	 * 	- `min` (int): Minimum allowed value (default=0)
+	 * 	- `max` (int): Maximum allowed value (default=PHP_INT_MAX)
+	 * 	- `maxItems` (int): Maximum items allowed in each array (default=0, which means no limit)
+	 *  - `maxDepth` (int): Max nested array depth (default=0, which means no nesting allowed) Since 3.0.160
+	 *  - `strict` (bool): Remove rather than convert any values that are not all digits or fall outside min/max range? (default=true) 
+	 *     Note that this default for the strict option is different from the one on the intArray() method. 
+	 * @return array Array of integers
+	 * @since 3.0.165
+	 *
+	 */
+	public function intArrayVal($value, $options = array()) {
+		$defaults = array(
+			'strict' => is_bool($options) ? $options : true,
+			'csv' => false,
+		);
+		$options = is_array($options) ? array_merge($defaults, $options) : $defaults;
+		return $this->intArray($value, $options);
 	}
 
 	/**
@@ -3460,6 +4540,320 @@ class Sanitizer extends Wire {
 		}
 
 		return $data;
+	}
+
+	/**
+	 * Given a potentially multi-dimensional array, return a flat 1-dimensional array
+	 * 
+	 * #pw-group-arrays
+	 * 
+	 * @param array $value
+	 * @param array $options
+	 *  - `preserveKeys` (bool): Preserve associative array keys where possible? (default=false)
+	 *  - `maxDepth` (int): Max depth of nested arrays to flatten into value, after which they are discarded (default=0).
+	 *     The default value of 0 removes any nested arrays, so specify 1 or higher to include them. 
+	 * @return array
+	 * @since 3.0.160
+	 * 
+	 */
+	public function flatArray($value, $options = array()) {
+		
+		static $depth = 0;
+		
+		$defaults = array(
+			'preserveKeys' => is_bool($options) ? $options : false,
+			'maxDepth' => 0,
+		);
+		
+		if(!is_array($value)) return array($value);
+	
+		$flat = array();
+		$isFlat = true;
+		$options = is_array($options) ? array_merge($defaults, $options) : $defaults;
+		$preserveKeys = $options['preserveKeys'];
+		
+		foreach($value as $key => $val) {
+			if(is_array($val)) $isFlat = false;
+			if(!$isFlat) break;
+		}	
+		
+		if($isFlat) return $preserveKeys ? $value : array_values($value);
+		
+		$depth++;
+		
+		foreach($value as $key => $val) {
+			
+			$hasStringKey = $preserveKeys && is_string($key);
+			
+			if(!is_array($val)) {
+				// not an array value
+				if($hasStringKey) {
+					// associative key
+					list($n, $kk) = array(0, $key);
+					// this while loop likely is not needed
+					while(isset($flat[$kk])) $kk = "$key-" . (++$n);
+					$flat[$kk] = $val;
+				} else {
+					// integer key
+					$flat[] = $val;
+				}
+				continue;
+			}
+	
+			/** @var array $val At this point val is known to be an array */
+			
+			if($depth > $options['maxDepth']) {
+				// skip over arrays when when we are at the max recursion depth
+				continue;
+			}
+			
+			if(!$preserveKeys) {
+				// if keys are not preserved then we can take a shortcut
+				$flat = array_merge($flat, $this->flatArray($val, $options));
+				continue;
+			}
+		
+			// array value with preserved keys
+			foreach($this->flatArray($val, $options) as $k => $v) {
+				if(is_int($k) || ctype_digit("$k")) {
+					// integer keys in nested array
+					$k = (int) $k;
+					if($hasStringKey) {
+						// parent array is associative and preserveKeys is true
+						do {
+							$kk = "$key.$k"; // parent key + incrementing child key
+							$k++;
+						} while(isset($flat[$kk]) || isset($value[$kk]));
+						$flat[$kk] = $v;
+					} else {
+						// parent array is non-associative
+						$flat[] = $v;
+					}
+				} else if(isset($value[$k]) || isset($flat[$k])) {
+					// associative key already exists
+					// create new key that marries parent and child keys
+					$n = -1;
+					do {
+						$kk = $key . '.' . $k;
+						// no match on first-round, start incrementing
+						if($n > -1) $kk .= '-' . $n; 
+						$n++;
+					} while(isset($value[$kk]) || isset($flat[$kk])); 
+					$flat[$kk] = $v;
+				} else {
+					// associative key that is not already taken
+					$flat[$k] = $v;
+				}
+			}
+		}
+
+		$depth--;
+		
+		return $flat;
+	}
+
+	/**
+	 * Return array of all words in given value (excluding punctuation and other non-word characters)
+	 * 
+	 * #pw-group-arrays
+	 *
+	 * @param string|array $value String containing words
+	 * @param array $options
+	 *  - `keepNumbers` (bool): Keep number-only words in return value? (default=true)
+	 *  - `keepNumberFormat` (bool): Keep minus/comma/period in numbers rather than splitting into words? Also requires keepNumbers==true. (default=false)
+	 *  - `keepUnderscore` (bool): Keep underscores as part of words? (default=false)
+	 *  - `keepHyphen` (bool): Keep hyphenated words? (default=false)
+	 *  - `keepApostrophe` (bool): Keep apostrophe as part of words? (default=true) 3.0.168+
+	 *  - `keepChars` (array): Specify any of these to also keep as part of words ['.', ',', ';', '/', '*', ':', '+', '<', '>', '_', '-' ] (default=[])
+	 *  - `minWordLength` (int): Minimum word length (default=1)
+	 *  - `maxWordLength` (int): Maximum word length (default=80)
+	 *  - `maxWords` (int): Maximum number of words allowed (default=0, no limit)
+	 *  - `stripTags` (bool): Strip markup tags so they don’t contribute to returned word list? (default=true)
+	 * @return array
+	 * @since 3.0.160
+	 *
+	 */
+	public function wordsArray($value, array $options = array()) {
+
+		$defaults = array(
+			'minWordLength' => 1,
+			'maxWordLength' => 80,
+			'maxWords' => 0,
+			'keepHyphen' => false, 
+			'keepUnderscore' => false,
+			'keepApostrophe' => true,
+			'keepNumbers' => true,
+			'keepNumberFormat' => true, 
+			'keepChars' => array(),
+			'stripTags' => true,
+		);
+
+		$options = array_merge($defaults, $options);
+		$minLength = (int) $options['minWordLength'];
+		$maxLength = (int) $options['maxWordLength'];
+		$replacements = array();
+		$replacementPrefix = 'REP';
+		
+		if(is_array($value)) {
+			$value = $this->flatArray($value);
+			$value = implode(' ', $value);
+		} else if(!is_string($value)) {
+			$value = $this->string($value);
+		}
+	
+		// prevents non-bracketed tag names from also becoming words
+		if($options['stripTags']) $value = strip_tags($value);
+		if($options['keepHyphen']) $options['keepChars'][] = '-';
+		if($options['keepUnderscore']) $options['keepChars'][] = '_';
+	
+		// option to let apostrophe be a word separator
+		if(!$options['keepApostrophe']) {
+			$value = str_replace(array("'", "’"), ' ', $value);
+		}
+		
+		if(!strlen($value)) return array();
+		
+		if(!$options['keepNumbers']) {
+			$options['keepNumberFormat'] = false;
+			if(!ctype_alpha($value)) $value = preg_replace('/\d+[-–\d,. ]*/', ' ', $value);
+		} else if($options['keepNumberFormat']) {
+			$replacements = $this->wordsArrayNumberReplacements($value, $replacementPrefix);
+		}
+		
+		if(count($options['keepChars'])) {
+			$n = 0;
+			foreach($options['keepChars'] as $c) {
+				if(strpos($value, $c) === false) continue;
+				do {
+					$token = "$n{$replacementPrefix}CHR$n";
+				} while(strpos($value, $token) !== false && ++$n); 
+				$value = str_replace($c, $token, $value);
+				$replacements[$token] = $c;
+			}
+		}
+	
+		// https://www.php.net/manual/en/regexp.reference.unicode.php
+		// pZ=Separator (line, paragraph or space)
+		// pS=Symbol (all)
+		// pC=Other (control, format, surrogate)
+		// p{Pd}=Dash punctuation
+		// pP=Punctuation (all)
+		// pPs=Open punctuation
+		// pPe=Close punctuation
+		// pPf=Final punctuation
+		// pPo=Other punctuation
+		// pPi=Initial punctuation
+		// pM=Mark
+		// pMc=Spacing mark
+		// pMe=Enclosing mark
+		// pMn=Non-spacing mark
+
+		//$splitWith = '.,;/*:+<>\s\pZ\pS\pC\p{Pd}\\\\';
+		$splitWith = '.,;/*:+<>\s\pZ\pS\pC\p{Pd}\p{Ps}\p{Pe}\p{Pf}\p{Pi}\p{Po}\\\\';
+		$regex = '!\pP*[' . $splitWith . ']\pP*!u';
+		$words = preg_split($regex, "$value ", -1, PREG_SPLIT_NO_EMPTY);
+
+		if($words === false) $words = array();
+		
+		$hasReplacements = count($replacements);
+		$keepChars = $hasReplacements && count($options['keepChars']) ? implode('', $options['keepChars']) : '';
+		$numWords = 0;
+		
+		foreach($words as $key => $word) {
+			if(!strlen(trim($word))) {
+				unset($words[$key]); 
+				continue;
+			}
+			if($options['maxWords'] && $numWords >= $options['maxWords']) {
+				unset($words[$key]);
+				continue;
+			}
+			if($hasReplacements && strpos($word, $replacementPrefix) !== false) {
+				$word = str_replace(array_keys($replacements), array_values($replacements), $word);
+				$words[$key] = $word;
+			}
+			if(!$options['keepNumbers'] && ctype_digit($word)) {
+				// remove numbers
+				unset($words[$key]); 
+				continue;
+			}
+			$length = $this->multibyteSupport ? mb_strlen($word) : strlen($word);
+			if($length < $minLength || $length > $maxLength) {
+				// remove any words that are outside the min/max length requirements
+				unset($words[$key]);
+				continue;
+			} else if($keepChars !== '' && !strlen(trim($word, $keepChars))) {
+				// remove any words that consist only of keepChars
+				unset($words[$key]);
+				continue;
+			}
+			$numWords++;
+		}
+		
+		if($options['maxWords'] && count($words) > $options['maxWords']) {
+			// may be impossible to reach but here as a backup
+			$words = array_slice($words, 0, $options['maxWords']); 
+		}
+
+		return $words;
+	}
+
+	/**
+	 * Identify decimals, minus signs and commas in numbers, replace them, and return the replacements array
+	 * 
+	 * @param string $value
+	 * @param string $prefix
+	 * @return array
+	 * 
+	 */
+	protected function wordsArrayNumberReplacements(&$value, $prefix = 'REP') {
+		
+		// keep floating point, negative, or thousands-separator numbers together
+		$replacements = array();
+		$hasPeriod = strpos($value, '.') !== false;
+		$hasComma = strpos($value, ',') !== false;
+		$hasHyphen = strpos($value, '-') !== false;
+		$hasMinus = $hasHyphen || strpos($value, '−') !== false;
+		$hasNumber = ($hasPeriod || $hasComma || $hasHyphen) && preg_match('![-.,]\d!', $value); 
+		
+		if(!$hasNumber) return array();
+		
+		if($hasPeriod && preg_match_all('!(\b|\d*)\.(\d+)\b!', $value, $matches)) {
+			// keep floating point numbers together
+			list($n, $decimal) = array(0, "0{$prefix}DEC0X");
+			while(strpos($value, $decimal) !== false && ++$n) $decimal = "{$n}{$prefix}DEC{$n}X";
+			foreach($matches[1] as $key => $n1) {
+				$n2 = $matches[2][$key];
+				$value = str_replace("$n1.$n2", "{$n1}$decimal{$n2}", $value);
+			}
+			$replacements[$decimal] = '.';
+		}
+		
+		if($hasMinus && preg_match_all('!([-−])(\d+)!', $value, $matches)) {
+			// prevent negative numbers from losing their minus sign
+			list($n, $minus) = array(0, "0{$prefix}MIN0");
+			while(strpos($value, $minus) !== false && ++$n) $minus = "{$n}{$prefix}MIN{$n}";
+			foreach($matches[2] as $key => $digits) {
+				$sign = $matches[1][$key];
+				$minusKey = $sign === '-' ? "{$minus}D" : "{$minus}M";
+				$value = str_replace("$sign$digits", " $minusKey$digits", $value);
+				$replacements[$minusKey] = $sign;
+			}
+		}
+		
+		if($hasComma && preg_match_all('!(\d*,)(\d+)!', $value, $matches)) {
+			// keep commas that appear around digits
+			list($n, $comma) = array(0, "0{$prefix}COM0");
+			while(strpos($value, $comma) !== false && ++$n) $comma = "{$n}{$prefix}COM{$n}";
+			foreach($matches[1] as $key => $digits1) {
+				$digits1 = rtrim($digits1, ',');
+				$digits2 = $matches[2][$key];
+				$value = str_replace("$digits1,$digits2", "$digits1{$comma}$digits2", $value);
+				$replacements[$comma] = ',';
+			}
+		}
+		
+		return $replacements;
 	}
 
 	/**
@@ -3716,83 +5110,39 @@ class Sanitizer extends Wire {
 	 * 
 	 */
 	public function ___testAll($value) {
-		$sanitizers = array(
-			'alpha',
-			'alphanumeric',
-			'array',
-			'attrName',
-			'bit',
-			'bool',
-			'camelCase',
-			'chars',
-			'checkbox',
-			'date',
-			'digits',
-			'email',
-			'emailHeader',
-			'entities',
-			'entities1',
-			'entitiesMarkdown',
-			'fieldName',
-			'fieldSubfield',
-			'filename',
-			'float',
-			'httpUrl',
-			'hyphenCase',
-			'int',
-			'intArray',
-			'intSigned',
-			'intUnsigned',
-			'kebabCase',
-			'markupToLine',
-			'markupToText',
-			'max',
-			'maxBytes',
-			'maxLength',
-			'minLength',
-			'min',
-			'minArray',
-			'name',
-			'names',
-			'normalizeWhitespace',
-			'pageName',
-			'pageNameTranslate',
-			'pageNameUTF8',
-			'pagePathName',
-			'pagePathNameUTF8',
-			'pascalCase',
-			'path',
-			'purify',
-			'range',
-			'reduceWhitespace',
-			'removeMB4',
-			'removeNewlines',
-			'removeWhitespace',
-			'sanitize',
-			'selectorField',
-			'selectorValue',
-			'snakeCase',
-			'string',
-			'templateName',
-			'text',
-			'textarea',
-			'trim',
-			'truncate',
-			'unentities',
-			'url',
-			'valid',
-			'validate',
-			'varName',
-		);
 		$results = array();
-		foreach($sanitizers as $method) {
-			$results[$method] = $this->$method($value);
+		$fails = array();
+		foreach($this->sanitizers as $method => $types) {
+			$v = $this->$method($value);
+			$results[$method] = $v;
+			if(strpos($types, 'm') !== false) continue; // allows any type (m=mixed)
+			$type = strtolower(gettype($v));
+			$type = $type[0] === 'd' ? 'f' : $type[0];
+			if(strpos($types, $type) === false) $fails[$method] = "$type!=$types";
 		}
+		if(count($fails)) $results['FAILS'] = $fails;
 		return $results;
 	}
 
 	/**
+	 * Get all sanitizer method names and optionally types they return
+	 * 
+	 * #pw-group-other
+	 * 
+	 * @param bool $getReturnTypes Get array where method names are keys and values are return types?
+	 * @return array
+	 * @since 3.0.165
+	 * 
+	 */
+	public function getAll($getReturnTypes = false) {
+		return $getReturnTypes ? $this->sanitizers : array_keys($this->sanitizers); 
+	}
+
+	/**
 	 * Get instance of WireTextTools
+	 * 
+	 * #pw-group-strings
+	 * #pw-group-other
 	 * 
 	 * @return WireTextTools
 	 * @since 3.0.101
@@ -3812,59 +5162,140 @@ class Sanitizer extends Wire {
 	 */
 
 	/**
-	 * Validate a file using FileValidator modules
+	 * Validate and sanitize a file using FileValidator modules
 	 *
-	 * Note that this is intended for validating file data, not file names.
+	 * This is intended for validating file data, not file names. Depending on the FileValidator
+	 * modules that are used, they may sanitize the file in order ot make it valid. 
 	 *
-	 * IMPORTANT: This method returns NULL if it can't find a validator for the file. This does
-	 * not mean the file is invalid, just that it didn't have the tools to validate it.
+	 * IMPORTANT: This method returns NULL if it can’t find a validator for the file. This does
+	 * not mean the file is invalid, just that it didn't have the tools to validate it. If the
+	 * getArray option is specified then it would return a blank array rather than null.
+	 * 
+	 * **getArray option** (3.0.167+):  
+	 * When specifying true for the `getArray` option this method will return an associative array 
+	 * of validation results indexed by module name. The values for each module name will be either 
+	 * true (file validates as-is), 1 (file valid after it was sanitized), or false (file not valid 
+	 * and cannot be sanitized). A blank array is returned if no modules could perform the validation.
+	 * 
+	 * **dryrun option** (3.0.167+):   
+	 * When specifying true for the `dryrun` option please note that no validation is performed and 
+	 * instead the method returns true or false as to whether or not the file can be validated. It 
+	 * only looks at the file extension, so the file need not exist. Meaning it’s also okay to specify 
+	 * filename like “test.jpg” without path, when using this option. If using the dryrun option with 
+	 * the `getArray` option then it will return an array of module names that would perform the 
+	 * validation for the given file type (or blank array if none). 
 	 * 
 	 * #pw-group-files
 	 *
 	 * @param string $filename Full path and filename to validate
 	 * @param array $options When available, provide array with any one or all of the following:
-	 *  - `page` (Page): Page object associated with $filename.
-	 *  - `field` (Field): Field object associated with $filename.
-	 *  - `pagefile` (Pagefile): Pagefile object associated with $filename.
-	 * @return bool|null Returns TRUE if valid, FALSE if not, or NULL if no validator available for given file type.
+	 *  - `page` (Page): Page object associated with $filename. (default=null)
+	 *  - `field` (Field): Field object associated with $filename. (default=null)
+	 *  - `pagefile` (Pagefile): Pagefile object associated with $filename. (default=null)
+	 *  - `getArray` (bool): Return array of results rather than a boolean? (default=false) Added 3.0.167
+	 *  - `dryrun` (bool|int): Specify true to only return if the file can be validated with this method,
+	 *     without actually performing any validation. (default=false). Added 3.0.167
+	 * @return bool|array|null Returns one of the following, depending on use of dryrun and getArray options:
+	 *  - Boolean true if valid, false if not.
+	 *  - NULL if no validator available for given file type or file does not exist.
+	 *  - If dryrun option is used, returns boolean (or array of strings if getArray option is true).
+	 *  - If getArray option is used, returns associative array of results or blank array if no validators.
 	 *
 	 */
 	public function validateFile($filename, array $options = array()) {
+		
 		$defaults = array(
 			'page' => null,
 			'field' => null,
 			'pagefile' => null,
+			'dryrun' => false,
+			'getArray' => false,
 		);
+		
 		$options = array_merge($defaults, $options);
+		$filename = (string) $filename;
+		$modules = $this->wire()->modules;
 		$extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-		$validators = $this->wire('modules')->findByPrefix('FileValidator', false);
-		$isValid = null;
-		foreach($validators as $validatorName) {
-			$info = $this->wire('modules')->getModuleInfoVerbose($validatorName);
+		$validatorNames = array();
+		$validatorResults = array();
+		$getArray = $options['getArray'];
+		$dryrun = $options['dryrun'] || !empty($options['dryRun']);
+		$numFailed = 0;
+		$numPassed = 0;
+
+		if(!strlen($extension) || (!$dryrun && !is_file($filename))) {
+			return $getArray ? array() : null;
+		}
+
+		// find modules that can validate extension
+		foreach($modules->findByPrefix('FileValidator', false) as $validatorName) {
+			$info = $modules->getModuleInfoVerbose($validatorName);
 			if(empty($info) || empty($info['validates'])) continue;
+
 			foreach($info['validates'] as $ext) {
-				if($ext[0] == '/') {
-					if(!preg_match($ext, $extension)) continue;
-				} else if($ext !== $extension) {
-					continue;
-				}
-				$validator = $this->wire('modules')->get($validatorName);
-				if(!$validator) continue;
-				if(!empty($options['page'])) $validator->setPage($options['page']);
-				if(!empty($options['field'])) $validator->setField($options['field']);
-				if(!empty($options['pagefile'])) $validator->setPagefile($options['pagefile']);
-				$isValid = $validator->isValid($filename);
-				if(!$isValid) {
-					// move errors to Sanitizer class so they can be retrieved
-					foreach($validator->errors('clear array') as $error) {
-						$this->wire('log')->error($error);
-						$this->error($error);
-					}
-					break;
+				if($ext === $extension) {
+					$validatorNames[$validatorName] = $validatorName;
+				} else if($ext[0] === '/' && preg_match($ext, $extension)) {
+					$validatorNames[$validatorName] = $validatorName;
+				} else {
+					// module does not validate extension
 				}
 			}
+		
+			// when doing a dryrun we only need to know if at least one module can run
+			if($dryrun && !$getArray && count($validatorNames)) break;
 		}
-		return $isValid;
+		
+		// if doing a dryrun then just return whether or not validation is possible
+		if($dryrun) return ($getArray ? $validatorNames : count($validatorNames) > 0);
+
+		// if no validators can validate extension then early exit
+		if(empty($validatorNames)) return ($getArray ? array() : null);
+		
+		// execute modules that can validate extension and get results
+		foreach($validatorNames as $validatorName) {
+			/** @var FileValidatorModule $validator */
+			$validator = $modules->get($validatorName);
+			if(!$validator) continue; // not likely
+			
+			if(!empty($options['page'])) $validator->setPage($options['page']);
+			if(!empty($options['field'])) $validator->setField($options['field']);
+			if(!empty($options['pagefile'])) $validator->setPagefile($options['pagefile']);
+			
+			$valid = $validator->isValid($filename);
+			$validatorResults[$validatorName] = $valid; // false, true or 1
+			
+			if($valid) {
+				// true (bool): file is valid as-is
+				// 1 (int): file is valid as a result of sanitization
+				// in either case, continue on to the next applicable FileValidator module
+				$numPassed++;
+				
+			} else {
+				// at this point we’ve determined file is not valid
+				$numFailed++;
+
+				// move errors to Sanitizer class so they can be retrieved
+				foreach($validator->errors('clear array') as $error) {
+					$this->wire()->log->error($error);
+					$this->error($error);
+				}
+
+				// unless we are returning an array of results, we can stop now for invalid files
+				if(!$getArray) break;
+			}
+		}
+	
+		// return array result of all validations
+		if($getArray) return $validatorResults;
+		
+		// return null if no validators could be used
+		if(!$numPassed && !$numFailed) return null;
+
+		// if passsed 1+ validators and failed 0, return true
+		if($numPassed > 0 && $numFailed === 0) return true;
+		
+		return false;
 	}
 
 	/**********************************************************************************************************************
@@ -3998,6 +5429,8 @@ class Sanitizer extends Wire {
 	 * // numbers appended to text sanitizers imply max length
 	 * $value = $sanitizer->sanitize($value, 'text128,entities'); 
 	 * ~~~~~
+	 * 
+	 * #pw-group-other
 	 * 
 	 * @param mixed $value
 	 * @param string $method Method name "method", or combined method name(s) "method1,method2,method3"

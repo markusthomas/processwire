@@ -9,7 +9,7 @@
  * @method Permission|NullPage get($selector) Return permission by given name, numeric ID or a selector string.
  * @method array getOptionalPermissions($omitInstalled = true) #pw-internal
  * @method array saveReady(Page $page) Hook called just before a Permission is saved #pw-hooker
- * @method void saved(Page $page, array $changes = array(), $values = array()) #pw-hooker
+ * @method void saved(Page $page, array $changes = array(), $values = []) #pw-hooker
  * @method void added(Page $page) Hook called just after a Permission is added #pw-hooker
  * @method void deleteReady(Page $page) Hook called before a Permission is deleted #pw-hooker
  * @method void deleted(Page $page) Hook called after a permission is deleted #pw-hooker
@@ -167,14 +167,18 @@ class Permissions extends PagesType {
 			'page-edit-images' => $this->_('Use the image editor to manipulate (crop, resize, etc.) images'),
 			'page-rename' => $this->_('Change the name of published pages they are allowed to edit'),
 			'user-admin-all' => $this->_('Administer users in any role (except superuser)'),
+			'user-view-all' => $this->_('User can view users in any role (including superuser)'),
+			'user-view-self' => $this->_('User can view themself (when not already by other permission)')
 		);
 
-		foreach($this->wire('roles') as $role) {
-			if($role->name == 'guest' || $role->name == 'superuser') continue;
+		foreach($this->wire()->roles as $role) {
+			if($role->name === 'guest') continue;
+			$a["user-view-$role->name"] = sprintf($this->_('View users in role: %s'), $role->name); 
+			if($role->name === 'superuser') continue;
 			$a["user-admin-$role->name"] = sprintf($this->_('Administer users in role: %s'), $role->name);
 		}
-
-		$languages = $this->wire('languages');
+		
+		$languages = $this->wire()->languages;
 		if($languages) {
 			$label = $this->_('Edit fields on a page in language: %s');
 			$alsoLabel = $this->_('(also required to create or delete pages)');
@@ -252,6 +256,7 @@ class Permissions extends PagesType {
 	 * @return \ArrayObject
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		return parent::getIterator();
 	}

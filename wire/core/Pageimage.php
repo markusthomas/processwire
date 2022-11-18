@@ -24,7 +24,7 @@
  * ~~~~~
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  * @property-read int $width Width of image, in pixels.
@@ -41,6 +41,7 @@
  * @property-read string $alt Convenient alias for the 'description' property, unless overridden (since 3.0.125).
  * @property-read string $src Convenient alias for the 'url' property, unless overridden (since 3.0.125).
  * @property-read PagefileExtra $webp Access webp version of image (since 3.0.132)
+ * @property-read float $ratio Image ratio where 1.0 is square, >1 is wider than tall, >2 is twice as wide as well, <1 is taller than wide, etc. (since 3.0.154+)
  *
  * Properties inherited from Pagefile
  * ==================================
@@ -76,6 +77,7 @@
  * @method array rebuildVariations($mode = 0, array $suffix = array(), array $options = array())
  * @method install($filename)
  * @method render($markup = '', $options = array())
+ * @method void createdVariation(Pageimage $image, array $data) Called after new image variation created (3.0.180+)
  *
  */
 
@@ -160,6 +162,7 @@ class Pageimage extends Pagefile {
 	public function __construct(Pagefiles $pagefiles, $filename) {
 
 		if(!$pagefiles instanceof Pageimages) throw new WireException("Pageimage::__construct requires instance of Pageimages"); 
+		$pagefiles->wire($this);
 		$this->pageimages = $pagefiles; 
 		parent::__construct($pagefiles, $filename); 
 	}
@@ -173,6 +176,8 @@ class Pageimage extends Pagefile {
 	public function __clone() {
 		$this->imageInfo['width'] = 0; 
 		$this->imageInfo['height'] = 0;
+		$this->pageimageDebugInfo = null;
+		$this->variations = null;
 		parent::__clone();
 	}
 
@@ -444,12 +449,30 @@ class Pageimage extends Pagefile {
 			case 'sizeOptions':	
 				$value = $this->sizeOptions;
 				break;
+			case 'ratio':
+				$value = $this->ratio();
+				break;
 			default: 
 				$value = parent::get($key); 
 		}
 		return $value; 
 	}
 
+	/**
+	 * Set image info (internal use)
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param array $info
+	 * 
+	 */
+	public function setImageInfo(array $info) {
+		// width and height less than 0 indicate percentage rather than pixels
+		if(isset($info['width']) && $info['width'] < 0) $info['width'] = abs($info['width']) . '%';
+		if(isset($info['height']) && $info['height'] < 0) $info['height'] = abs($info['height']) . '%';
+		$this->imageInfo = array_merge($this->imageInfo, $info);
+	}
+	
 	/**
 	 * Gets the image information with PHP’s getimagesize function and caches the result
 	 * 
@@ -462,31 +485,32 @@ class Pageimage extends Pagefile {
 	 */
 	public function getImageInfo($reset = false) {
 
-		if($reset) $checkImage = true; 
-			else if($this->imageInfo['width']) $checkImage = false; 
-			else $checkImage = true; 
-		
 		$imageInfo = $this->imageInfo;
 		$filename = is_string($reset) && file_exists($reset) ? $reset : ''; 
-
-		if($checkImage || $filename) { 
-			if($this->ext == 'svg') {
-				$info = $this->getImageInfoSVG($filename);
-				$imageInfo['width'] = $info['width'];
-				$imageInfo['height'] = $info['height'];
-			} else {
-				if($filename) {
-					$info = @getimagesize($filename);
-				} else {
-					$info = @getimagesize($this->filename);
-				}
-				if($info) {
-					$imageInfo['width'] = $info[0];
-					$imageInfo['height'] = $info[1];
-				}
-			}
-			if(!$filename) $this->imageInfo = $imageInfo;
+	
+		if(!$reset && $imageInfo['width'] && !$filename) {
+			return $imageInfo;
 		}
+
+		if($this->ext == 'svg') {
+			$imageInfo = array_merge($imageInfo, $this->getImageInfoSVG($filename));
+		} else {
+			if($filename) {
+				$info = @getimagesize($filename);
+			} else {
+				$info = @getimagesize($this->filename);
+			}
+			if((!$info || empty($info[0])) && !empty($this->sizeOptions['_width'])) {
+				// on fail, fallback to size options that were requested for the image (if available)
+				$imageInfo['width'] = $this->sizeOptions['_width'];
+				$imageInfo['height'] = $this->sizeOptions['_height'];
+			} else if($info) {
+				$imageInfo['width'] = $info[0];
+				$imageInfo['height'] = $info[1];
+			}
+		}
+		
+		if(!$filename) $this->imageInfo = $imageInfo;
 
 		return $imageInfo; 
 	}
@@ -565,6 +589,9 @@ class Pageimage extends Pagefile {
 	 * 
 	 * // Output thumbnail
 	 * echo "<img src='$thumb->url' />";
+	 * 
+	 * // Create image of size predefined in $config->imageSizes (3.0.151+)
+	 * $photo = $image->size('landscape'); 
 	 * ~~~~~
 	 * 
 	 * **About the $options argument**
@@ -625,8 +652,8 @@ class Pageimage extends Pagefile {
 	 * #pw-group-common
 	 * #pw-hooks
 	 *
-	 * @param int $width Target width of new image
-	 * @param int $height Target height of new image
+	 * @param int|string $width Target width of new image or (3.0.151+) specify prefined image size name
+	 * @param int|array $height Target height of new image or (3.0.151+) options array if no height argument needed
 	 * @param array|string|int $options Array of options to override default behavior: 
 	 *  - Specify `array` of options as indicated in the section above. 
 	 *  - Or you may specify type `string` containing "cropping" value.
@@ -636,8 +663,21 @@ class Pageimage extends Pagefile {
 	 *  If the specified dimensions/options are the same as the original, then the original will be returned.
 	 *
 	 */
-	public function size($width, $height, $options = array()) {
-		if(!is_array($options)) $options = $this->sizeOptionsToArray($options);
+	public function size($width, $height = 0, $options = array()) {
+		
+		if(is_array($height)) {
+			$options = $height;
+			$height = 0;
+		}
+		
+		if(!is_array($options)) {
+			$options = $this->sizeOptionsToArray($options);
+		}
+		
+		if(is_string($width) && $width && !ctype_digit($width)) {
+			// named image size
+			return $this->sizeName($width, $options);
+		}
 
 		if($this->wire('hooks')->isHooked('Pageimage::size()')) {
 			$result = $this->__call('size', array($width, $height, $options)); 
@@ -645,7 +685,7 @@ class Pageimage extends Pagefile {
 			$result = $this->___size($width, $height, $options);
 		}
 
-		if($result) {
+		if($result && $result !== $this) {
 			$options['_width'] = $width;
 			$options['_height'] = $height;
 			$result->set('sizeOptions', $options);
@@ -708,6 +748,7 @@ class Pageimage extends Pagefile {
 		$debug = $config->debug;
 		$configOptions = $config->imageSizerOptions; 
 		$webpOptions = $config->webpOptions;
+		$createdVariationHookData = null; // populated as array only when new variation created (for createdVariation hook)
 		if(!empty($webpOptions['quality'])) $defaultOptions['webpQuality'] = $webpOptions['quality'];
 		
 		if(!is_array($configOptions)) $configOptions = array();
@@ -811,7 +852,7 @@ class Pageimage extends Pagefile {
 		// create a new resize if it doesn't already exist or forceNew option is set
 		if(!$filenameFinalExists && !file_exists($this->filename())) {
 			// no original file exists to create variation from 
-			$this->error = "Original image does not exist to create size variation";
+			$this->error = "Original image does not exist to create size variation: " . $this->url();
 			
 		} else if(!$filenameFinalExists || $options['forceNew']) {
 
@@ -862,8 +903,15 @@ class Pageimage extends Pagefile {
 					if($sizer->resize($width, $height)) {
 						if($options['webpAdd'] && $options['webpOnly']) {
 							if(is_file($filenameUnvalidated)) $files->unlink($filenameUnvalidated);
-						} else if(!$files->rename($filenameUnvalidated, $filenameFinal)) {
-							$this->error = "Rename failed: $filenameUnvalidated => $filenameFinal";
+						} else {
+							clearstatcache();
+							if(!$files->rename($filenameUnvalidated, $filenameFinal)) {
+								if($files->exists($filenameFinal)) {
+									// potential race condition: another request won
+								} else {
+									$this->error = "Rename failed: $filenameUnvalidated => $filenameFinal";
+								}
+							}
 						}
 						if($options['webpAdd'] && file_exists($filenameUnvalidatedWebp)) { 
 							$files->rename($filenameUnvalidatedWebp, $filenameFinalWebp);
@@ -871,13 +919,25 @@ class Pageimage extends Pagefile {
 					} else {
 						$this->error = "ImageSizer::resize($width, $height) failed for $filenameUnvalidated";
 					}
-
+					
 					if($debug && empty($options['webpOnly'])) $this->wire('log')->save('image-sizer',
 						str_replace('ImageSizerEngine', '', $sizer->getEngine()) . ' ' . 
 						($this->error ? "FAILED Resize: " : "Resized: ") . "$originalName => " . basename($filenameFinal) . " " . 
 						"({$width}x{$height}) " . Debug::timer($timer) . " secs $originalSize => " . filesize($filenameFinal) . " bytes " . 
 						"(quality=$options[quality], sharpening=$options[sharpening]) "
 					);
+					
+					if(!$this->error) {
+						$createdVariationHookData = array(
+							'width' => $width,
+							'height' => $height,
+							'options' => $options,
+							'filenameUnvalidated' => $filenameUnvalidated,
+							'filenameFinal' => $filenameFinal,
+							'filenameUnvalidatedWebp' => $filenameUnvalidatedWebp,
+							'filenameFinalWebp' => $filenameFinalWebp,
+						);
+					}
 					
 				} catch(\Exception $e) {
 					$this->trackException($e, false); 
@@ -894,10 +954,10 @@ class Pageimage extends Pagefile {
 		// if an error occurred, that error property will be populated with details
 		if($this->error) { 
 			// error condition: unlink copied files
-			if($filenameFinal && is_file($filenameFinal)) $files->unlink($filenameFinal, true);
-			if($filenameUnvalidated && is_file($filenameUnvalidated)) $files->unlink($filenameUnvalidated);
-			if($filenameFinalWebp && is_file($filenameFinalWebp)) $files->unlink($filenameFinalWebp, true);
-			if($filenameUnvalidatedWebp && is_file($filenameUnvalidatedWebp)) $files->unlink($filenameUnvalidatedWebp);
+			if($filenameFinal && $files->exists($filenameFinal)) $files->unlink($filenameFinal, true);
+			if($filenameUnvalidated && $files->exists($filenameUnvalidated)) $files->unlink($filenameUnvalidated);
+			if($filenameFinalWebp && $files->exists($filenameFinalWebp)) $files->unlink($filenameFinalWebp, true);
+			if($filenameUnvalidatedWebp && $files->exists($filenameUnvalidatedWebp)) $files->unlink($filenameUnvalidatedWebp);
 
 			// we also tell PW about it for logging and/or admin purposes
 			$this->error($this->error);
@@ -907,6 +967,8 @@ class Pageimage extends Pagefile {
 
 		$pageimage->setFilename($filenameFinal); 	
 		$pageimage->setOriginal($this); 
+		
+		if($createdVariationHookData) $this->createdVariation($pageimage, $createdVariationHookData); 
 
 		return $pageimage; 
 	}
@@ -935,15 +997,44 @@ class Pageimage extends Pagefile {
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param $width
-	 * @param $height
+	 * @param int|string $width
+	 * @param int|array $height
 	 * @param array $options See options in size() method. 
 	 * @return Pageimage
 	 *
 	 */
-	public function hidpiSize($width, $height, $options = array()) {
-		$options['hidpi'] = true; 
-		return $this->size($width, $height, $options); 
+	public function hidpiSize($width, $height = 0, $options = array()) {
+		if(is_array($height)) {
+			$height['hidpi'] = true;
+		} else {
+			$options['hidpi'] = true;
+		}
+		return $this->size($width, $height, $options);
+	}
+
+	/**
+	 * Return image of size indicated by predefined setting
+	 * 
+	 * Settings for predefined sizes can be specified in `$config->imageSizes` array. 
+	 * Each named item in this array must contain at least 'width' and 'height, but can also
+	 * contain any other option from the `Pageimage::size()` argument `$options`. 
+	 * 
+	 * @param string $name Image size name
+	 * @param array $options Optionally add or override options defined for size. 
+	 * @return Pageimage
+	 * @since 3.0.151
+	 * @throws WireException If given a $name that is not present in $config->imageSizes
+	 * 
+	 */
+	public function sizeName($name, array $options = array()) {
+		$sizes = $this->wire('config')->imageSizes; 
+		if(!isset($sizes[$name])) throw new WireException("Unknown image size '$name' (not in \$config->imageSizes)"); 
+		$size = $sizes[$name];
+		$options = array_merge($size, $options);
+		unset($options['width'], $options['height']); 
+		if(!isset($size['width'])) $size['width'] = 0;
+		if(!isset($size['height'])) $size['height'] = 0;
+		return $this->size((int) $size['width'], (int) $size['height'], $options);
 	}
 
 	/**
@@ -1211,6 +1302,24 @@ class Pageimage extends Pagefile {
 	}
 
 	/**
+	 * Get ratio of width divided by height
+	 * 
+	 * @return float
+	 * @since 3.0.154
+	 * 
+	 */
+	public function ratio() {
+		$width = $this->width();
+		$height = $this->height();
+		if($width === $height) return 1.0;
+		$ratio = $width / $height;
+		$ratio = round($ratio, 2);
+		if($ratio > 99.99) $ratio = 99.99; // max allowed width>height ratio
+		if($ratio < 0.01) $ratio = 0.01; // min allowed height>width ratio
+		return $ratio;
+	}
+
+	/**
 	 * Get the PageimageVariations helper instancd
 	 * 
 	 * #pw-internal
@@ -1341,6 +1450,16 @@ class Pageimage extends Pagefile {
 	public function removeVariations(array $options = array()) {
 		return $this->variations()->remove($options);
 	}
+
+	/**
+	 * Hook called after successful creation of image variation
+	 * 
+	 * @param Pageimage $image The variation image that was created
+	 * @param array $data Verbose associative array of data used to create the variation 
+	 * @since 3.0.180
+	 * 
+	 */
+	protected function ___createdVariation(Pageimage $image, array $data) { }
 
 	/**
 	 * Identify this Pageimage as a variation, by setting the Pageimage it was resized from.
@@ -1496,7 +1615,7 @@ class Pageimage extends Pagefile {
 		$original = null;
 		$replacements = array();
 		$properties = array(
-			'url', 'httpUrl', 'URL', 'HTTPURL',
+			'url', 'src', 'httpUrl', 'URL', 'HTTPURL',
 			'description', 'alt', 'tags', 'ext', 'class',
 			'width', 'height', 'hidpiWidth', 'hidpiHeight',
 		);
@@ -1610,9 +1729,13 @@ class Pageimage extends Pagefile {
 			$height = 0;
 		}
 		$options['webpAdd'] = true;
-		$original->size($width, $height, $options);
-		$error = $this->error;
+		try {
+			$original->size($width, $height, $options);
+		} catch(\Exception $e) {
+			$this->error = ($this->error ? "$this->error - " : "") . $e->getMessage();
+		}
 		
+		$error = $this->error;
 		$event->return = empty($error); 
 	}
 	
@@ -1632,6 +1755,64 @@ class Pageimage extends Pagefile {
 		$extras = parent::extras();
 		$extras['webp'] = $this->webp();
 		return $extras;
+	}
+	
+	/**
+	 * Rename this file
+	 *
+	 * Remember to follow this up with a `$page->save()` for the page that the file lives on.
+	 *
+	 * #pw-group-manipulation
+	 *
+	 * @param string $basename New name to use. Must be just the file basename (no path).
+	 * @return string|bool Returns new name (basename) on success, or boolean false if rename failed.
+	 *
+	 */
+	public function rename($basename) {
+		
+		$variations = $this->getVariations();
+		$oldBasename = $this->basename;
+		$newBasename = parent::rename($basename);
+		
+		if($newBasename === false) return false;
+		
+		$ext = '.' . $this->ext();
+		$oldName = basename($oldBasename, $ext);
+		$newName = basename($newBasename, $ext); 
+		
+		foreach($variations as $pageimage) {
+			/** @var Pageimage $pageimage */
+			if(strpos($pageimage->basename, $oldName) !== 0) continue;
+			$newVariationName = $newName . substr($pageimage->basename, strlen($oldName));
+			$pageimage->rename($newVariationName);
+		}
+		
+		return $newBasename;
+	}
+	
+	/**
+	 * Replace file with another
+	 *
+	 * Should be followed up with a save() to ensure related properties are also committed to DB.
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $filename File to replace current one with
+	 * @param bool $move Move given $filename rather than copy? (default=true)
+	 * @return bool
+	 * @throws WireException
+	 * @since 3.0.154
+	 *
+	 */
+	public function replaceFile($filename, $move = true) {
+		if(!parent::replaceFile($filename, $move)) return false;
+		$this->getImageInfo(true);
+		return true;
+	}
+
+	public function __isset($key) {
+		if($key === 'original') return $this->original !== null;
+		return parent::__isset($key);
 	}
 
 	/**

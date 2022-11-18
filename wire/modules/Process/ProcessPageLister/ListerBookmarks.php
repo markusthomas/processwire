@@ -68,6 +68,7 @@ class ListerBookmarks extends Wire {
 	 * 
 	 */
 	public function __construct(Page $page, User $user) {
+		$page->wire($this);
 		$this->page = $page;
 		$this->user = $user;
 		parent::__construct();
@@ -599,6 +600,7 @@ class ListerBookmarks extends Wire {
 			$bookmarkID = $bookmark['id'];
 		} else {
 			$type = self::typePublic;
+			$bookmarkID = (string) $bookmarkID;
 			$ownedPrefix = $this->typePrefix(self::typeOwned);
 			if(strpos($bookmarkID, $ownedPrefix) !== false) {
 				list($userID, $bookmarkID) = explode($ownedPrefix, $bookmarkID);

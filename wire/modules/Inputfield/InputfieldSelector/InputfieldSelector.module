@@ -356,63 +356,71 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 	 */
 	public function setup() {
 
-		$this->operators = array(
-			'=' => $this->_('Equals'), 
-			'!=' => $this->_('Not Equals'), 
-			'>' => $this->_('Greater Than'),
-			'<' => $this->_('Less Than'),
-			'>=' => $this->_('Greater Than or Equal'),
-			'<=' => $this->_('Less Than or Equal'),
-			'%=' => $this->_('Contains Text'),
-			'*=' => $this->_('Contains Phrase'),
-			'~=' => $this->_('Contains Words'),
-			'^=' => $this->_('Starts With'),
-			'$=' => $this->_('Ends With'),
-			'!%=' => $this->_('Does Not Contain Text'), 
-			'!*=' => $this->_('Does Not Contain Phrase'), 
-			'!~=' => $this->_('Does Not Contain Words'),
-			'!^=' => $this->_('Does Not Start With'),
-			'!$=' => $this->_('Does Not End With'),
-			'.=' => $this->_('Ascending By'), 
-			'.=-' => $this->_('Descending By'), 
+		$notLabel = $this->_('Not: %s'); 
+		$findOperators = array();
+		$findNotOperators = array();
+		$showFieldLabels = $this->showFieldLabels;
+		
+		$operators = Selectors::getOperators(array(
+			'getIndexType' => 'operator',
+			'getValueType' => 'verbose',
+		));
+		
+		foreach($operators as $operator => $info) {
+			$this->operators[$operator] = $info['label'];
+			if($info['compareType'] & Selector::compareTypeFind) {
+				$findOperators[$operator] = $info['label'];
+				$findNotOperators["!$operator"] = sprintf($notLabel, $info['label']);
+			}
+		}
+		
+		$this->operators = array_merge($this->operators, $findNotOperators, array(
+			'.=' => $this->_('Ascending By'),
+			'.=-' => $this->_('Descending By'),
 			'@=' => $this->_('Has'),
 			'@!=' => $this->_('Does Not Have'),
-			'#=' => $this->_('Matches'),
-			'#!=' => $this->_('Does Not Match'),
-			'=""' => $this->_('Is Empty'), 
-			'!=""' => $this->_('Is Not Empty'), 
-			);
+			'=""' => $this->_('Is Empty'),
+			'!=""' => $this->_('Is Not Empty'),
+			//'#=' => $this->_('Matches'),
+			//'#!=' => $this->_('Does Not Match'),
+		));
 
 		// operators by input type
 		// this is a backup and/or for system fields, as these may also be specified
 		// with fieldtype's getSelectorInfo() method, which takes precedence
 		$this->operatorsByType = array(
 			'name' => array('=', '!=', '%='), 
-			'text' => array('%=', '!%=', '*=', '!*=', '~=', '!~=', '^=', '!^=', '$=', '!$=', '=', '!=', '=""', '!=""'), 
+			// 'text' => array('%=', '!%=', '*=', '!*=', '~=', '!~=', '^=', '!^=', '$=', '!$=', '=', '!=', '=""', '!=""'),
+			'text' => array_merge($findOperators, array('=', '!=', '<', '<=', '>', '>='), $findNotOperators), 
 			'autocomplete' => array('=', '!='), 
 			'number' => array('=', '!=', '<', '>', '<=', '>=', '=""', '!=""'), 
 			'datetime' => array('=', '!=', '<', '>', '<=', '>='), 
 			'page' => array('@=', '@!='), 
 			'checkbox' => array('=', '!='), 
 			'sort' => array('.=', '.=-'),
-			'status' => array('@=', '@!='), 
+			'status' => array('@=', '@!=', '<', '<=', '>', '>='), 
 			//'selector' => array('#=', '#!='),
 			'selector' => array('=', '!=', '<', '>', '<=', '>='), 
 			); 
 	
 		// chars that are trimmed off operators before being used	
 		// enables different contexts for the same operator
-		$this->operatorTrimChars = '.@#';
+		$this->operatorTrimChars = '.@';
 	
 		$templates = array();
-		foreach($this->wire('templates') as $template) {
-			if(($template->flags & Template::flagSystem) && !$this->allowSystemTemplates) {
-				continue; 
-			}
+		$templatesByLabel = array();
+		$initTemplates = $this->getTemplatesFromInitValue($this->initValue);
+		foreach($this->wire()->templates as $template) {
+			if(($template->flags & Template::flagSystem) && !$this->allowSystemTemplates) continue; 
+			if(count($initTemplates) && !in_array($template->id, $initTemplates)) continue;
 			$label = $template->getLabel();
-			if($label != $template->name) $label .= " ($template->name)";
+			if(!$showFieldLabels || $showFieldLabels > 1 || isset($templatesByLabel[$label])) {
+				if(strtolower($template->name) != strtolower($label)) $label .= " ($template->name)";
+			}
+			$templatesByLabel[$label] = $template;
 			$templates[$template->id] = $label;
 		}
+		unset($templatesByLabel);
 
 		// make users selectable if there are under $maxUsers of them
 		// otherwise utilize the user ID property
@@ -519,7 +527,7 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 					'temp' => $this->_('Temp'),
 				),
 				'sanitizer' => 'integer',
-				'operators' => array('@=', '@!='),
+				'operators' => $this->operatorsByType['status'],
 			),
 			'template' => array(
 				'input' => 'select', 
@@ -736,7 +744,7 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 	protected function renderTestSelector($selector) {
 		try {
 			$selector = $this->sanitizeSelectorString($selector); 
-			$cnt = $this->wire('pages')->count($selector, array('allowCustom' => true));
+			$cnt = $this->wire()->pages->count($selector, array('allowCustom' => true));
 			$out = '';
 			// take into account a limit=n 
 			if(strpos($selector, 'limit=') !== false && preg_match('/\blimit=(\d+)/', $selector, $matches)) {
@@ -751,12 +759,22 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 				$bookmark = array(
 					'defaultSelector' => $selector, 
 					'initSelector' => $this->initValue,
-					);
+				);
 				$previewColumns = $this->sessionGet('previewColumns');
-				if($previewColumns && is_string($previewColumns)) $previewColumns = explode(',', $previewColumns);
-				if(is_array($previewColumns) && count($previewColumns)) $bookmark['columns'] = $previewColumns; 
-				$this->wire('modules')->includeModule('ProcessPageLister'); 
-				$id = ((int) $this->wire('input')->get('id')) . '_' . $this->attr('name'); 
+				if($previewColumns && is_string($previewColumns)) {
+					$previewColumns = explode(',', str_replace(' ', ',', $previewColumns));
+				}
+				if(is_array($previewColumns) && count($previewColumns)) {
+					$a = array();
+					$sanitizer = $this->wire()->sanitizer;
+					foreach($previewColumns as $key => $col) {
+						$col = empty($col) ? '' : $sanitizer->name($col);
+						if(strlen("$col")) $a[] = $col;
+					}
+					if(count($a)) $bookmark['columns'] = $a;
+				}
+				$this->wire()->modules->includeModule('ProcessPageLister'); 
+				$id = ((int) $this->wire()->input->get('id')) . '_' . $this->attr('name'); 
 				$url = ProcessPageLister::addSessionBookmark($id, $bookmark); 
 				if($url) {
 					$title = $this->_('Pages that match your selector'); 
@@ -1824,6 +1842,9 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 				throw new WireException('initTemplate must be a Template or null');
 			}
 		}
+		if($key === 'limitFields' && !is_array($value)) {
+			$value = $this->wire()->sanitizer->array($value);
+		}
 		return parent::set($key, $value);
 	}
 
@@ -1881,7 +1902,7 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 
 		// convert the value attribute to a Selectors object
 		try {
-			$value = trim($this->attr('value')); 
+			$value = trim((string) $this->attr('value')); 
 			$this->selectors = $this->wire(new Selectors()); 
 			if(!$this->parseVars) $this->selectors->setParseVars(false);
 			$this->selectors->setSelectorString($value); 
@@ -1950,6 +1971,12 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 					$field1 = substr($field, 0, $dot); 
 					$field2 = substr($field, $dot+1); 
 					$hasSubfields = true;
+					/*
+				} else if($field1 === 'parent') {
+					$hasSubfields = true;
+					if($dot) $field2 = substr($field, $dot + 1);
+					//	else $field2 = '.';
+					*/
 				} else {
 					$selectorInfo = $this->getSelectorInfo($field1);
 					$hasSubfields = $selectorInfo && isset($selectorInfo['subfields']) ? count($selectorInfo['subfields']) : false;
@@ -2031,6 +2058,9 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 	 */
 	public function sanitizeSelectorString($selectorString, $parseVars = true) {
 		
+		$sanitizer = $this->wire()->sanitizer;
+		$users = $this->wire()->users;
+		
 		$initSelectors = $this->wire(new Selectors()); 
 		$userSelectors = $this->wire(new Selectors()); 
 		
@@ -2056,18 +2086,19 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 					$property = ctype_digit("$name") ? 'id' : 'name';
 					$operator = $s->operator === '!=' ? '=' : $s->operator;
 					if($property === 'name') {
-						$value = $this->wire('sanitizer')->selectorValue($this->wire('sanitizer')->pageNameUTF8($name));
+						$value = $sanitizer->selectorValue($sanitizer->pageNameUTF8($name));
 					} else {
 						$value = (int) $name; // id
+						if($value === 0) $value = '';
 					}
-					$ids = array_merge($ids, $this->wire('users')->findIDs("$property$operator$value"));
+					if($value !== '') $ids = array_merge($ids, $users->findIDs("$property$operator$value"));
 				}
 				if($s->operator != '=' && $s->operator != '!=') {
 					$userSelectors->remove($s);
-					$s = new SelectorEqual($s->field, count($ids) ? $ids : 0);
+					$s = new SelectorEqual($s->field, count($ids) ? $ids : '');
 					$userSelectors->add($s);
 				} else {
-					$s->value = count($ids) ? $ids : 0;
+					$s->value = count($ids) ? $ids : '';
 				}
 			}
 		}
@@ -2075,6 +2106,7 @@ class InputfieldSelector extends Inputfield implements ConfigurableModule {
 		$selector = (string) $initSelectors . ", ";
 		$selector .= (string) $userSelectors; 
 		$selector = trim($selector, ", ");
+		
 		return $selector; 
 	}
 

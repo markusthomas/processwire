@@ -5,7 +5,7 @@
  * 
  * Implements page caching of loaded pages and PageArrays for $pages API variable
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -25,6 +25,14 @@ class PagesLoaderCache extends Wire {
 	protected $pageSelectorCache = array();
 
 	/**
+	 * [ 'cache group name' => [ page IDs ] ]
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $cacheGroups = array();
+
+	/**
 	 * @var Pages
 	 * 
 	 */
@@ -38,6 +46,25 @@ class PagesLoaderCache extends Wire {
 	 */
 	public function __construct(Pages $pages) {
 		$this->pages = $pages;
+	}
+
+	/**
+	 * Get cache status
+	 * 
+	 * Returns count of each cache type, or contents of each cache type of verbose option is specified. 
+	 * 
+	 * @param bool|null $verbose Specify true to get contents of cache, false to get string counts, or omit for array of counts
+	 * @return array|string
+	 * @since 3.0.198
+	 * 
+	 */
+	public function getCacheStatus($verbose = null) {
+		$a = array(
+			'pages' => ($verbose ? $this->pageIdCache : count($this->pageIdCache)), 
+			'selectors' => ($verbose ? $this->pageSelectorCache : count($this->pageSelectorCache)), 
+			'groups' => ($verbose ? $this->cacheGroups : count($this->cacheGroups)),
+		);
+		return ($verbose === false ? "pages=$a[pages], selectors=$a[selectors], groups=$a[groups]" : $a);
 	}
 	
 	/**
@@ -74,20 +101,43 @@ class PagesLoaderCache extends Wire {
 	}
 
 	/**
+	 * Cache given page into a named group that it can be uncached with
+	 * 
+	 * @param Page $page
+	 * @param string $groupName
+	 * @since 3.0.198
+	 * 
+	 */
+	public function cacheGroup(Page $page, $groupName) {
+		if(!$page->id) return;
+		if(!isset($this->cacheGroups[$groupName])) $this->cacheGroups[$groupName] = array();
+		$this->pageIdCache[$page->id] = $page;
+		$this->cacheGroups[$groupName][] = $page->id;
+	}
+
+	/**
 	 * Remove the given page from the cache.
 	 *
 	 * Note: does not remove pages from selectorCache. Call uncacheAll to do that.
 	 *
-	 * @param Page $page Page to uncache
+	 * @param Page|int $page Page to uncache or ID of page (prior to 3.0.153 only Page object was accepted)
 	 * @param array $options Additional options to modify behavior:
 	 *   - `shallow` (bool): By default, this method also calls $page->uncache(). To prevent call to $page->uncache(), set 'shallow' => true.
 	 * @return bool True if page was uncached, false if it didn't need to be
 	 *
 	 */
-	public function uncache(Page $page, array $options = array()) {
-		if(empty($options['shallow'])) $page->uncache();
-		if(isset($this->pageIdCache[$page->id])) {
-			unset($this->pageIdCache[$page->id]);
+	public function uncache($page, array $options = array()) {
+		if($page instanceof Page) {
+			$pageId = $page->id; 
+		} else {
+			$pageId = is_int($page) ? $page : (int) "$page"; 
+			$page = isset($this->pageIdCache[$pageId]) ? $this->pageIdCache[$pageId] : null;
+		}
+		if(empty($options['shallow']) && $page) {
+			$page->uncache();
+		}
+		if(isset($this->pageIdCache[$pageId])) {
+			unset($this->pageIdCache[$pageId]);
 			return true;
 		} else {
 			return false;
@@ -106,13 +156,13 @@ class PagesLoaderCache extends Wire {
 	public function uncacheAll(Page $page = null, array $options = array()) {
 
 		if($page) {} // to ignore unused parameter inspection
-		$user = $this->wire('user');
-		$language = $this->wire('languages') ? $user->language : null;
+		$user = $this->wire()->user;
+		$language = $this->wire()->languages ? $user->language : null;
 		$cnt = 0;
 
 		$this->pages->sortfields(true); // reset
 
-		if($this->wire('config')->debug) {
+		if($this->wire()->config->debug) {
 			$this->pages->debugLog('uncacheAll', 'pageIdCache=' . count($this->pageIdCache) . ', pageSelectorCache=' . 
 				count($this->pageSelectorCache));
 		}
@@ -127,11 +177,35 @@ class PagesLoaderCache extends Wire {
 
 		$this->pageIdCache = array();
 		$this->pageSelectorCache = array();
+		$this->cacheGroups = array();
 
 		Page::$loadingStack = array();
 		Page::$instanceIDs = array();
 		
 		return $cnt;
+	}
+
+	/**
+	 * Uncache pages that were cached with given group name
+	 * 
+	 * @param string $groupName
+	 * @param array $options
+	 * @return int
+	 * @since 3.0.198
+	 * 
+	 */
+	public function uncacheGroup($groupName, array $options = array()) {
+		$qty = 0;
+		if(!isset($this->cacheGroups[$groupName])) return 0;
+		foreach($this->cacheGroups[$groupName] as $pageId) {
+			if(!isset($this->pageIdCache[$pageId])) continue;
+			$page = $this->pageIdCache[$pageId];
+			if($page && empty($options['shallow'])) $page->uncache();
+			unset($this->pageIdCache[$pageId]);
+			$qty++;
+		}
+		unset($this->cacheGroups[$groupName]); 
+		return $qty;
 	}
 
 	/**
@@ -232,8 +306,8 @@ class PagesLoaderCache extends Wire {
 		}
 
 		// cache non-default languages separately
-		if($this->wire('languages')) {
-			$language = $this->wire('user')->language;
+		if($this->wire()->languages) {
+			$language = $this->wire()->user->language;
 			if(!$language->isDefault()) {
 				$selector .= ", _lang=$language->id"; // for caching purposes only, not recognized by PageFinder
 			}

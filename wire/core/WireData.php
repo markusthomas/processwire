@@ -63,8 +63,10 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 			if(!is_array($value)) $value = (array) $value;
 			return $this->setArray($value); 
 		}
-		$v = isset($this->data[$key]) ? $this->data[$key] : null;
-		if(!$this->isEqual($key, $v, $value)) $this->trackChange($key, $v, $value); 
+		if($this->trackChanges) {
+			$v = isset($this->data[$key]) ? $this->data[$key] : null;
+			if(!$this->isEqual($key, $v, $value)) $this->trackChange($key, $v, $value);
+		}
 		$this->data[$key] = $value; 
 		return $this; 
 	}
@@ -134,7 +136,6 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * 
 	 * @param string $key
 	 * @param mixed $value
-	 * return $this
 	 *
 	 */
 	public function __set($key, $value) {
@@ -211,7 +212,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 *   - `$this` - If you are setting a value.
 	 */
 	public function data($key = null, $value = null) {
-		if(is_null($key)) return $this->data;
+		if($key === null) return $this->data;
 		if(is_array($key)) {
 			if($value === true) {
 				$this->data = $key;
@@ -219,7 +220,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 				$this->data = array_merge($this->data, $key);
 			}
 			return $this;
-		} else if(is_null($value)) {
+		} else if($value === null) {
 			return isset($this->data[$key]) ? $this->data[$key] : null;
 		} else {
 			$this->data[$key] = $value; 
@@ -378,6 +379,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * @return \ArrayObject
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		return new \ArrayObject($this->data); 
 	}
@@ -398,6 +400,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 *
 	 */
 	public function has($key) {
+		if(isset($this->data[$key])) return true; // optimization
 		return ($this->get($key) !== null); 
 	}
 
@@ -481,6 +484,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * @param int|string|array|object $value Value of item.
 	 * 
 	 */
+	#[\ReturnTypeWillChange] 
 	public function offsetSet($key, $value) {
 		$this->set($key, $value);
 	}
@@ -494,6 +498,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * @return int|string|array|object Value of item requested, or false if it doesn't exist.
 	 * 
 	 */
+	#[\ReturnTypeWillChange] 
 	public function offsetGet($key) {
 		$value = $this->get($key);
 		return is_null($value) ? false : $value;
@@ -510,6 +515,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * @return bool True if item existed and was unset. False if item didn't exist.
 	 * 
 	 */
+	#[\ReturnTypeWillChange] 
 	public function offsetUnset($key) {
 		if($this->__isset($key)) {
 			$this->remove($key);
@@ -518,7 +524,6 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 			return false;
 		}
 	}
-
 
 	/**
 	 * Determines if the given index exists in this WireData.
@@ -531,6 +536,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 * @return bool True if the item exists, false if not.
 	 * 
 	 */
+	#[\ReturnTypeWillChange] 
 	public function offsetExists($key) {
 		return $this->__isset($key);
 	}

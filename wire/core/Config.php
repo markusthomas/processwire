@@ -8,10 +8,11 @@
  * This file is licensed under the MIT license
  * https://processwire.com/about/license/mit/
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  * 
  * #pw-summary Holds ProcessWire configuration settings as defined in /wire/config.php and /site/config.php. 
+ * #pw-summary-js Javascript configuration
  * #pw-body =
  * For more detailed descriptions of these $config properties, including default values, see the
  * [/wire/config.php](https://github.com/processwire/processwire/blob/master/wire/config.php) file. 
@@ -32,7 +33,7 @@
  * @property FilenameArray $scripts Array used by ProcessWire admin to keep track of what javascript files its template should load. It will be blank otherwise. Feel free to use it for the same purpose in your own sites. #pw-group-runtime
  * 
  * @property Paths $urls Items from $config->urls reflect the http path one would use to load a given location in the web browser. URLs retrieved from $config->urls always end with a trailing slash. This is the same as the $urls API variable. #pw-group-runtime #pw-group-URLs
- * @property Paths $paths All of what can be accessed from $config->urls can also be accessed from $config->paths, with one important difference: the returned value is the full disk path on the server. There are also a few items in $config->paths that aren't in $config->urls. All entries in $config->paths always end with a trailing slash. #pw-group-runtime
+ * @property Paths $paths All of what can be accessed from $config->urls can also be accessed from $config->paths, with one important difference: the returned value is the full disk path on the server. There are also a few items in $config->paths that aren't in $config->urls. All entries in $config->paths always end with a trailing slash. #pw-group-paths #pw-group-runtime
  * 
  * @property string $templateExtension Default is 'php' #pw-group-template-files
  * 
@@ -40,6 +41,7 @@
  * 
  * @property bool $protectCSRF Enables CSRF (cross site request forgery) protection on all PW forms, recommended for security. #pw-group-HTTP-and-input
  * 
+ * @property array $imageSizes Predefined image sizes (and options) indexed by name. See /wire/config.php for example. #pw-group-images @since 3.0.151
  * @property array $imageSizerOptions Options to set image sizing defaults. Please see the /wire/config.php file for all options and defaults. #pw-group-images
  * @property array $webpOptions Options for webp images. Please see /wire/config.php for all options. #pw-group-images
  * 
@@ -61,6 +63,7 @@
  * @property string $sessionNameSecure Session name when on HTTPS. Used when the sessionCookieSecure option is enabled (default). When blank (default), it will assume sessionName + 's'. #pw-group-session
  * @property bool|int $sessionCookieSecure Use secure cookies when on HTTPS? When enabled, separate sessions will be maintained for HTTP vs. HTTPS. Good for security but tradeoff is login session may be lost when switching (default=1 or true). #pw-group-session
  * @property null|string $sessionCookieDomain Domain to use for sessions, which enables a session to work across subdomains, or NULL to disable (default/recommended). #pw-group-session
+ * @property string $sessionCookieSameSite Cookie “SameSite” value for sessions - “Lax” (default) or “Strict”. #pw-group-session @since 3.0.178
  * @property bool|callable $sessionAllow Are sessions allowed? Typically boolean true, unless provided a callable function that returns boolean. See /wire/config.php for an example.  #pw-group-session
  * @property int $sessionExpireSeconds How many seconds of inactivity before session expires? #pw-group-session
  * @property bool $sessionChallenge Should login sessions have a challenge key? (for extra security, recommended) #pw-group-session
@@ -90,6 +93,7 @@
  * @property int $maxUrlDepth Maximum URL/path slashes (depth) for request URLs. (Min=10, Max=60) #pw-group-URLs
  * @property string $wireInputOrder Order that variables with the $input API var are handled when you access $input->var. #pw-group-HTTP-and-input
  * @property bool $wireInputLazy Specify true for $input API var to load input data in a lazy fashion and potentially use less memory. Default is false. #pw-group-HTTP-and-input
+ * @property int $wireInputArrayDepth Maximum multi-dimensional array depth for input variables accessed from $input or 1 to only allow single dimension arrays. #pw-group-HTTP-and-input @since 3.0.178
  * @property array $cookieOptions Options for setting cookies from $input->cookie #pw-group-HTTP-and-input
  * 
  * @property bool $advanced Special mode for ProcessWire system development. Not recommended for regular site development or production use. #pw-group-system
@@ -121,6 +125,7 @@
  * @property int $dbQueryLogMax Maximum number of queries WireDatabasePDO will log in memory, when debug mode is enabled (default=1000). #pw-group-database
  * @property string $dbInitCommand Database init command, for PDO::MYSQL_ATTR_INIT_COMMAND. Note placeholder {charset} gets replaced with $config->dbCharset. #pw-group-database
  * @property bool $dbStripMB4 When dbEngine is not utf8mb4 and this is true, we will attempt to remove 4-byte characters (like emoji) from inserts when possible. Note that this adds some overhead. #pw-group-database
+ * @property array|null $dbReader Configuration values for read-only database connection (if available). #pw-group-database @since 3.0.175
  * 
  * @property array $pageList Settings specific to Page lists. #pw-group-modules
  * @property array $pageEdit Settings specific to Page editors. #pw-group-modules
@@ -128,34 +133,44 @@
  * @property string $moduleServiceURL URL where the modules web service can be accessed #pw-group-modules
  * @property string $moduleServiceKey API key for modules web service #pw-group-modules
  * @property bool $moduleCompile Allow use of compiled modules? #pw-group-modules
- * @property array $wireMail Default WireMail module settings. #pw-group-modules
+ * @property array $wireMail Default WireMail module settings. See /wire/config.php $config->wireMail for details. #pw-group-system
+ * @property array $moduleInstall Admin module install options you allow. #pw-group-modules
  * 
  * @property array $substituteModules Associative array with names of substitute modules for when requested module doesn't exist #pw-group-modules
  * @property array $logs Additional core logs to keep #pw-group-admin
  * @property bool $logIP Include IP address in logs, when applicable? #pw-group-admin
- * @property string $defaultAdminTheme Default admin theme: AdminThemeDefault or AdminThemeReno #pw-group-admin
+ * @property string $defaultAdminTheme Default admin theme: AdminThemeUikit, AdminThemeDefault or AdminThemeReno. #pw-group-admin
+ * @property array $AdminThemeUikit Settings specific to AdminThemeUikit module (see this setting in /wire/config.php). #pw-group-admin @since 3.0.179
  * @property string $fatalErrorHTML HTML used for fatal error messages in HTTP mode. #pw-group-system
+ * @property int $fatalErrorCode HTTP code to send on fatal error (typically 500 or 503). #pw-group-system
  * @property array $modals Settings for modal windows #pw-group-admin
  * @property array $preloadCacheNames Cache names to preload at beginning of request #pw-group-system
  * @property bool $allowExceptions Allow Exceptions to propagate? (default=false, specify true only if you implement your own exception handler) #pw-group-system
  * @property bool $usePoweredBy Use the x-powered-by header? Set to false to disable. #pw-group-system
  * @property bool $useFunctionsAPI Allow most API variables to be accessed as functions? (see /wire/core/FunctionsAPI.php) #pw-group-system
  * @property bool $useMarkupRegions Enable support for front-end markup regions? #pw-group-system
+ * @property bool|array $useLazyLoading Delay loading of fields (and templates/fieldgroups) till requested? Can improve performance on systems with lots of fields or templates. #pw-group-system @since 3.0.193
+ * @property bool $usePageClasses Use custom Page classes in `/site/classes/[TemplateName]Page.php`? #pw-group-system @since 3.0.152
  * @property int $lazyPageChunkSize Chunk size for for $pages->findMany() calls. #pw-group-system
  * 
  * @property string $userAuthSalt Salt generated at install time to be used as a secondary/non-database salt for the password system. #pw-group-session
  * @property string $userAuthHashType Default is 'sha1' - used only if Blowfish is not supported by the system. #pw-group-session
+ * @property string $tableSalt Additional hash for other (non-authentication) purposes. #pw-group-system @since 3.0.164
  * 
  * @property bool $internal This is automatically set to FALSE when PW is externally bootstrapped. #pw-group-runtime
  * @property bool $external This is automatically set to TRUE when PW is externally bootstrapped. #pw-internal
  * @property bool $cli This is automatically set to TRUE when PW is booted as a command line (non HTTP) script. #pw-group-runtime
+ * @property string $serverProtocol Current server protocol, one of: HTTP/1.1, HTTP/1.0, HTTP/2, or HTTP/2.0. #pw-group-runtime @since 3.0.166
  * @property string $versionName This is automatically populated with the current PW version name (i.e. 2.5.0 dev) #pw-group-runtime
  * @property int $inputfieldColumnWidthSpacing Used by some admin themes to commmunicate to InputfieldWrapper at runtime. #pw-internal
+ * @property array InputfieldWrapper Settings specific to InputfieldWrapper class #pw-internal
  * @property bool $debugMarkupQA Set to true to make the MarkupQA class report verbose debugging messages (to superusers). #pw-internal
  * @property array $markupQA Optional settings for MarkupQA class used by FieldtypeTextarea module. #pw-group-modules
  * @property string|null $pagerHeadTags Populated at runtime to contain `<link rel=prev|next />` tags for document head, after pagination has been rendered by MarkupPagerNav module. #pw-group-runtime 
  * @property array $statusFiles File inclusions for ProcessWire’s runtime statuses/states. #pw-group-system @since 3.0.142
  * @property int $status Value of current system status/state corresponding to ProcessWire::status* constants. #pw-internal
+ * @property null|bool $disableUnknownMethodException Disable the “Method does not exist or is not callable in this context” exception. (default=null) #pw-internal
+ * @property string|null $phpMailAdditionalParameters Additional params to pass to PHP’s mail() function (when used), see $additional_params argument at https://www.php.net/manual/en/function.mail.php #pw-group-system
  * 
  * @property int $rootPageID Page ID of homepage (usually 1) #pw-group-system-IDs
  * @property int $adminRootPageID Page ID of admin root page #pw-group-system-IDs
@@ -188,6 +203,30 @@ class Config extends WireData {
 	const debugVerbose = 2;
 
 	/**
+	 * Get config property
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param string $key
+	 * @return string|array|int|bool|object|callable|null
+	 * 
+	 */
+	public function get($key) {
+		$value = parent::get($key);
+		if($value === null) {
+			// runtime properties
+			if($key === 'serverProtocol') {
+				$value = $this->serverProtocol();
+			} else if($key === 'tableSalt') {
+				$value = parent::get('installed');
+				if(!$value) $value = @filemtime($this->paths->assets . 'active.php'); 
+				$this->data['tableSalt'] = $value;
+			}
+		}
+		return $value;
+	}
+
+	/**
 	 * Get URL for requested resource or module
 	 * 
 	 * `$config->url('something')` is a shorter alternative for `$config->urls->get('something')`.
@@ -200,6 +239,8 @@ class Config extends WireData {
 	 * $url = $config->urls->admin; 
 	 * ~~~~~
 	 * 
+	 * #pw-group-URLs
+	 * 
 	 * @param string|Wire $for Predefined ProcessWire URLs property or module name
 	 * @return string|null
 	 * 
@@ -211,7 +252,7 @@ class Config extends WireData {
 	/**
 	 * Get URL for requested resource or module or get all URLs if no argument
 	 * 
-	 * #pw-internal
+	 * #pw-group-URLs
 	 * 
 	 * @param string|Wire $for Predefined ProcessWire URLs property or module name
 	 * @return null|string|Paths
@@ -247,6 +288,9 @@ class Config extends WireData {
 	 *   $config->setLocation('templates', 'site/dev-templates/'); 
 	 * }
 	 * ~~~~~
+	 * 
+	 * #pw-group-URLs
+	 * #pw-group-paths
 	 * 
 	 * @param string $for Named location from `$config->paths` or `$config->urls`, one of: `cache`, `logs`, `files`, `tmp`, `templates`, or your own. 
 	 * @param string $dir Directory or URL to the location. Should be either a path or URL relative to current installation root (recommended), 
@@ -310,6 +354,8 @@ class Config extends WireData {
 	 * - The `$for` argument can be: `cache`, `logs`, `files`, `tmp`, `templates`, or one of your own. Other named locations may
 	 *   also work, but since they can potentially be used before PW’s “ready” state, they may not be reliable.
 	 * 
+	 * #pw-group-paths
+	 * 
 	 * @param string $for Named location from `$config->paths`, one of: `cache`, `logs`, `files`, `tmp`, `templates`, or your own. 
 	 * @param string $path Path relative to PW installation root (no leading slash), or absolute path if not. 
 	 * @return self
@@ -353,6 +399,8 @@ class Config extends WireData {
 	 *   $config->setUrl('files', 'https://files.domain.com/'); 
 	 * }
 	 * ~~~~~
+	 * 
+	 * #pw-group-URLs
 	 *
 	 * @param string $for Named location from `$config->urls`, one of: `cache`, `logs`, `files`, `tmp`, `templates`, or your own. 
 	 * @param string $url URL relative to PW installation root (no leading slash) or absolute URL if not (optionally including scheme and domain).
@@ -378,6 +426,8 @@ class Config extends WireData {
 	 * $path = $config->paths->root;
 	 * ~~~~~
 	 * 
+	 * #pw-group-paths
+	 * 
 	 * @param string $for Predefined ProcessWire paths property or module class name
 	 * @return null|string
 	 * 
@@ -389,7 +439,7 @@ class Config extends WireData {
 	/**
 	 * Get disk path for requested resource or module or get all paths if no argument
 	 *
-	 * #pw-internal
+	 * #pw-group-paths
 	 *
 	 * @param string $for Predefined ProcessWire paths property or module name
 	 * @return null|string|Paths
@@ -405,11 +455,23 @@ class Config extends WireData {
 	 *
 	 */
 	protected $jsFields = array();
+	
+	/**
+	 * Values $config->jsConfig()
+	 *
+	 * @var array
+	 *
+	 */
+	protected $jsData = array();
 
 	/**
 	 * Set or retrieve a config value to be shared with javascript
 	 * 
-	 * Values are set to the Javascript variable `ProcessWire.config[key]`. 
+	 * Values are set to the Javascript variable `ProcessWire.config[key]`.
+	 * 
+	 * Note: In ProcessWire 3.0.173+ when setting new values, it is preferable to use 
+	 * $config->jsConfig() instead, unless your intended use is to share an 
+	 * existing $config property with JS. 
 	 * 
 	 * 1. Specify a $key and $value to set a JS config value. 
 	 *
@@ -439,6 +501,8 @@ class Config extends WireData {
 	 * console.log(mySettings.foo);
 	 * console.log(mySettings.bar); 
 	 * ~~~~~
+	 * 
+	 * #pw-group-js
 	 *
 	 * @param string|array $key Property or array of properties
 	 * @param mixed $value
@@ -453,6 +517,7 @@ class Config extends WireData {
 			foreach($this->jsFields as $field) {
 				$data[$field] = $this->get($field); 
 			}
+			$data = array_merge($data, $this->jsData);
 			return $data; 
 
 		} else if(is_null($value)) {
@@ -466,6 +531,7 @@ class Config extends WireData {
 				return $a;
 			} else {
 				// return value for just one key
+				if(isset($this->jsData[$key])) return $this->jsData[$key];
 				return in_array($key, $this->jsFields) ? $this->get($key) : null;
 			}
 			
@@ -488,6 +554,58 @@ class Config extends WireData {
 
 		$this->jsFields[] = $key; 
 		return parent::set($key, $value); 
+	}
+
+	/**
+	 * Set or retrieve a config value exclusive to Javascript (ProcessWire.config)
+	 *
+	 * Values are set to the Javascript variable `ProcessWire.config[key]`.
+	 * 
+	 * Unlike $config->js(), values get or set are exclusive to JS config only. 
+	 * 
+	 * Values set with this method can be retrieved via $config->js() or $config->jsConfig(),
+	 * but they cannot be retrieved from $config->['key'] or $config->get('key').
+	 * 
+	 * If setting a new property for the JS config it is recommended that you use this
+	 * method rather than $config->js() in ProcessWire 3.0.173+. If backwards compatibility
+	 * is needed then you should still use $config->js().
+	 *
+	 * 1. Specify a $key and $value to set a JS config value.
+	 *
+	 * 2. Specify only a $key and omit the $value in order to retrieve an existing set value.
+	 *
+	 * 3. Specify no params to retrieve in array of all existing set values.
+	 *
+	 * ~~~~~
+	 * // Set a property from PHP
+	 * $config->jsConfig('mySettings', [
+	 *   'foo' => 'bar',
+	 *   'bar' => 123,
+	 * ]);
+	 *
+	 * // Get a property (from PHP)
+	 * $mySettings = $config->jsConfig('mySettings');
+	 * ~~~~~
+	 * ~~~~~
+	 * // Get a property (from Javascript):
+	 * var mySettings = ProcessWire.config.mySettings;
+	 * console.log(mySettings.foo);
+	 * console.log(mySettings.bar);
+	 * ~~~~~
+	 * 
+	 * #pw-group-js
+	 *
+	 * @param string $key Name of property to get or set or omit to return all data
+	 * @param mixed|null $value Specify value to set or omit (null) to get
+	 * @return mixed|null|array|self Returns null if $key not found, value when getting, self when setting, or array when getting all
+	 * @since 3.0.173
+	 *
+	 */
+	public function jsConfig($key = null, $value = null) {
+		if($key === null) return $this->jsData; // get all
+		if($value === null) return isset($this->jsData[$key]) ? $this->jsData[$key] : null; // get property
+		$this->jsData[$key] = $value; // set property
+		return $this;
 	}
 	
 	/**
@@ -642,9 +760,161 @@ class Config extends WireData {
 		if(!ctype_digit("$date")) $date = strtotime($date);
 		return $this->installed < $date; 
 	}
+
+	/**
+	 * Get current server protocol (for example: "HTTP/1.1")
+	 * 
+	 * This can be accessed by property `$config->serverProtocol`
+	 * 
+	 * #pw-group-tools
+	 * #pw-group-runtime
+	 * 
+	 * @return string
+	 * @since 3.0.166
+	 * 
+	 */
+	protected function serverProtocol() {
+		$protos = array('HTTP/1.1', 'HTTP/1.0', 'HTTP/2', 'HTTP/2.0');
+		$proto = isset($_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.1';
+		return $protos[(int) array_search($proto, $protos, true)];
+	}
+
+	/**
+	 * Current unsanitized request URL
+	 * 
+	 * - This is an alternative to `$input->url()` that’s available prior to API ready state.
+	 * - Useful if you need to know request URL from /site/config.php or other boot file.
+	 * - Returned value does not include query string, if present. 
+	 * - Returned value includes installation subdirectory, if present. 
+	 * 
+	 * ~~~~~
+	 * if($config->requestUrl() === '/products/2021/') {
+	 *   // current request URL is exactly “/products/2021/”
+	 * }
+	 * if($config->requestUrl('/products/2021/')) {
+	 *   // current request matches “/products/2021/” somewhere in URL
+	 * }
+	 * if($config->requestUrl([ 'foo', 'bar', 'baz' ])) {
+	 *   // current request has one or more of 'foo', 'bar', 'baz' in the URL
+	 * }
+	 * ~~~~~
+	 * 
+	 * #pw-group-URLs
+	 * #pw-group-tools 
+	 * #pw-group-runtime
+	 *
+	 * @param string|array $match Optionally return URL only if some part matches given string(s) (default='')
+	 * @param string $get Specify 'path' to get and/or match path, 'query' to get and/or match query string, or omit for URL (default='')
+	 * @return string Returns URL string or blank string if $match argument used and doesn’t match.
+	 * @since 3.0.175
+	 * 
+	 */
+	public function requestUrl($match = '', $get = '') {
+		if(empty($_SERVER['REQUEST_URI'])) return '';
+		$url = $_SERVER['REQUEST_URI'];
+		$query = '';
+		if(strpos($url, '?') !== false) {
+			list($url, $query) = explode('?', $url, 2);
+		}
+		if($get === 'query') {
+			$url = $query;
+		} else if($get === 'path') {
+			$rootUrl = $this->urls->root;
+			if($rootUrl !== '/' && strpos($url, $rootUrl) === 0) {
+				$url = substr($url, strlen($rootUrl) - 1);
+			}
+		}
+		if(!strlen($url)) return '';
+		if(is_array($match)) {
+			$found = false;
+			foreach($match as $m) {
+				if(strpos($url, $m) !== false) $found = true;
+				if($found) break;
+			}
+			if(count($match) && !$found) $url = '';
+		} else if(strlen($match)) {
+			if(strpos($url, $match) === false) $url = '';
+		}
+		return $url;
+	}
+
+	/**
+	 * Current unsanitized request path (URL sans ProcessWire installation subdirectory, if present)
+	 * 
+	 * This excludes any subdirectories leading to ProcessWire installation root, if present.
+	 * Useful if you need to know request path from /site/config.php or other boot file.
+	 * 
+	 * ~~~~~
+	 * if(strpos($config->requestPath(), '/processwire/') === 0) {
+	 *   // current request path starts with “/processwire/”
+	 * }
+	 * if($config->requestPath('/processwire/')) {
+	 *   // the text “/processwire/” appears somewhere in current request path
+	 * }
+	 * if($config->requestPath([ 'foo', 'bar', 'baz' ])) {
+	 *   // current request has one or more of 'foo', 'bar', 'baz' in the path
+	 * }
+	 * ~~~~~
+	 * 
+	 * #pw-group-URLs
+	 * #pw-group-tools
+	 * #pw-group-runtime
+	 *
+	 * @param string|array $match Optionally return path only if some part matches given string(s) (default='')
+	 * @return string Returns path string or blank string if $match argument used and doesn’t match.
+	 * @since 3.0.175
+	 *
+	 */
+	public function requestPath($match = '') {
+		return $this->requestUrl($match, 'path');
+	}
+
+	/**
+	 * Current request method
+	 * 
+	 * This is an alternative to `$input->requestMethod()` that’s available prior to API ready state.
+	 * Useful if you need to match request method from /site/config.php or other boot file.
+	 * 
+	 * ~~~~~
+	 * if($config->requestMethod('post')) { 
+	 *   // request method is POST
+	 * }
+	 * if($config->requestMethod() === 'GET') {
+	 *   // request method is GET
+	 * }
+	 * $method = $config->requestMethod([ 'POST', 'get' ]);
+	 * if($method) {
+	 *   // method is either 'POST' or 'GET'
+	 * }
+	 * ~~~~~
+	 * 
+	 * #pw-group-tools
+	 * #pw-group-runtime
+	 * 
+	 * @param string|array $match Return found method if request method equals one given (blank if not), not case sensitive (default='')
+	 * @return string Returns one of GET, POST, HEAD, PUT, DELETE, OPTIONS, PATCH, OTHER or blank string if no match
+	 * @since 3.0.175
+	 * 
+	 */
+	public function requestMethod($match = '') {
+		$methods = array('GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'OPTIONS', 'PATCH');
+		$method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper($_SERVER['REQUEST_METHOD']) : '';
+		$key = array_search($method, $methods);
+		$method = $key === false ? 'OTHER' : $methods[$key];
+		if(is_array($match)) {
+			$found = '';
+			foreach($match as $m) {
+				$m = strtoupper($m);
+				if($m === $method) $found = $method;
+				if($found) break;
+			}
+			return $found;
+		}
+		return ($match ? strtoupper($match) === $method : $method);
+	}
 	
 	/**
-	 * Set the current ProcessWire instance for this object (PW 3.0)
+	 * Set the current ProcessWire instance for this object
 	 *
 	 * #pw-internal
 	 *

@@ -3,7 +3,7 @@
  *
  * Maintains a collection of fields that are repeated for any number of times.
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -32,6 +32,18 @@ function InputfieldRepeater($) {
 	 * 
 	 */
 	var doubleClickTimer = null;
+
+	/**
+	 * True when an ajax request is currently processing a newly added item
+	 * 
+	 */
+	var currentlyAddingItem = false;
+
+	/**
+	 * Timeout tracker for insert actions
+	 * 
+	 */
+	var insertTimeout = null;
 
 	
 	/*** EVENTS ********************************************************************************************/
@@ -81,12 +93,14 @@ function InputfieldRepeater($) {
 			var $checkbox = $item.find('#delete_repeater' + pageID);
 
 			if($checkbox.is(":checked")) {
-				$checkbox.removeAttr('checked');
+				// $checkbox.removeAttr('checked'); // JQM
+				$checkbox.prop('checked', false);
 				$header.removeClass('ui-state-error').addClass('ui-state-default');
 				//if($parent.is('.InputfieldStateCollapsed')) $parent.toggleClass('InputfieldStateCollapsed', 100);
 				$item.removeClass('InputfieldRepeaterDeletePending');
 			} else {
-				$checkbox.attr('checked', 'checked');
+				// $checkbox.attr('checked', 'checked'); // JQM
+				$checkbox.prop('checked', true);
 				$header.removeClass('ui-state-default').addClass('ui-state-error');
 				if(!$item.hasClass('InputfieldStateCollapsed')) {
 					$header.find('.toggle-icon').click();
@@ -147,12 +161,104 @@ function InputfieldRepeater($) {
 			var itemID = $item.attr('data-page');
 			var $addLink = $item.closest('.InputfieldRepeater').children('.InputfieldContent')
 				.children('.InputfieldRepeaterAddItem').find('.InputfieldRepeaterAddLink:eq(0)');
+			// $('html, body').animate({ scrollTop: $addLink.offset().top - 100}, 250, 'swing');
+			
+			$item.siblings('.InputfieldRepeaterInsertItem').remove();
+			var depth = getItemDepth($item);
+			var $newItem = $item.siblings('.InputfieldRepeaterNewItem').clone();
+			var $nextItem = $item.next('.InputfieldRepeaterItem');
+			var nextItemDepth = $nextItem.length ? getItemDepth($nextItem) : depth;
+			var $prevItem = $item.prev('.InputfieldRepeaterItem');
+			var prevItemDepth = $prevItem.length ? getItemDepth($prevItem) : depth;
+			var insertBefore = depth < nextItemDepth;
+			if(depth < nextItemDepth) insertBefore = true;
+			$newItem.addClass('InputfieldRepeaterInsertItem').attr('id', $newItem.attr('id') + '-clone');
+			$newItem.find('.InputfieldHeader').html("<i class='fa fa-spin fa-spinner'></i>");
+			if(insertBefore) {
+				depth = getInsertBeforeItemDepth($item);
+				$newItem.addClass('InputfieldRepeaterInsertItemBefore');
+				$newItem.insertBefore($item);
+			} else {
+				depth = getInsertAfterItemDepth($item);
+				$newItem.addClass('InputfieldRepeaterInsertItemAfter');
+				$newItem.insertAfter($item);
+			}
+			setItemDepth($newItem, depth);
+			$newItem.show();
 			$addLink.attr('data-clone', itemID).click();
-			$('html, body').animate({ scrollTop: $addLink.offset().top - 100}, 250, 'swing');
 		});
 		return false;
 	};
-	
+
+	/**
+	 * Event when the copy/clone/paste action is clicked
+	 * 
+	 * @returns {boolean}
+	 * 
+	 */
+	var eventCopyCloneClick = function() {
+
+		if(isActionDisabled($(this))) return false;
+
+		var labels = ProcessWire.config.InputfieldRepeater.labels;
+		var $item = $(this).closest('.InputfieldRepeaterItem');
+		var itemID = $item.attr('data-page');
+		var $inputfield = $item.closest('.InputfieldRepeater');
+		var fieldName = $inputfield.attr('data-name');
+		var cookieName = copyPasteCookieName(fieldName); 
+		var copyValue = jQuery.cookie(cookieName);
+		var itemLabel = getItemLabel($item).text();
+		var pasteID = copyValue ? parseInt(copyValue.item) : '';
+		var pasteDisabled = copyValue ? '' : 'disabled ';
+		var pasteSelected = pasteID > 0 ? 'selected ' : '';
+		var note = '';
+		
+		if(pasteID > 0) {
+			note = "<div style='margin-top:8px'><i class='fa fa-paste fa-fw'></i>" + labels.copyInMemory + ' (id ' + pasteID + ')</div>';
+		}
+		
+		var input = 
+			'<option value="copy">' + labels.copy + '</option>' + 
+			'<option value="clone-before">' + labels.cloneBefore + '</option>' +
+			'<option value="clone-after">' + labels.cloneAfter + '</option>' + 
+			'<option ' + pasteDisabled + 'value="paste-before">' + labels.pasteBefore + '</option>' + 
+			'<option ' + pasteDisabled + pasteSelected + 'value="paste-after">' + labels.pasteAfter + '</option>' + 
+			'<option ' + pasteDisabled + 'value="clear">' + labels.clear + '</option>';
+		
+		if(note.length) note = "<span class='detail'>" + note + "</span>";
+		
+		var options = {
+			message: labels.selectAction + ' (id ' + itemID + ')', // message displayed at top
+			input: '<select name="action" class="uk-select">' + input + '</select>' + note, // HTML content that is to be displayed
+			callback: function(value) {
+				var action = value.action;
+				if(action === 'copy') {
+					copyRepeaterItem($item);
+					$item.fadeOut('fast', function() { $item.fadeIn('fast') }); 
+					$inputfield.addClass('InputfieldRepeaterCanPaste');
+				} else if(action === 'clone-before') {
+					cloneRepeaterItem($item, true);
+				} else if(action === 'clone-after') {
+					cloneRepeaterItem($item, false);
+				} else if(action === 'paste-before') {
+					pasteRepeaterItem($item, true);
+				} else if(action === 'paste-after') {
+					pasteRepeaterItem($item, false);
+				} else if(action === 'clear') {
+					jQuery.cookie(cookieName, null);
+					$inputfield.removeClass('InputfieldRepeaterCanPaste');
+				} else {
+					console.log('unknown action: ' + action);
+				}
+			},
+		};
+		
+		// open the add-type selection dialog
+		vex.dialog.open(options);
+		
+		return false;
+	};
+
 	var eventSettingsClick = function(e) {
 		var $this = $(this);
 		var $item = $this.closest('.InputfieldRepeaterItem');
@@ -209,6 +315,7 @@ function InputfieldRepeater($) {
 					.addClass('InputfieldRepeaterWasUnpublished');
 				$input.val('1');
 			}
+			$input.trigger('change');
 			checkMinMax($item.closest('.InputfieldRepeater'));
 		}, 250); 
 			
@@ -311,6 +418,8 @@ function InputfieldRepeater($) {
 	 * 
 	 */
 	var eventAddLinkClick = function() {
+		currentlyAddingItem = true;
+		
 		var $addLink = $(this);
 		var $inputfields = $addLink.parent('p').prev('ul.Inputfields');
 		var $inputfieldRepeater = $addLink.closest('.InputfieldRepeater');
@@ -318,20 +427,43 @@ function InputfieldRepeater($) {
 		var newItemTotal = 0; // for noAjaxAdd mode
 		var useAjax = $addLink.attr('data-noajax').length == 0;
 		var cloneID = $addLink.attr('data-clone');
+		var pageID = 0;
+		var depth = 0;
+		var redoSortAll = false;
+		var inputfieldPageID = parseInt($inputfieldRepeater.attr('data-page'));
 
 		function addRepeaterItem($addItem) {
 			// make sure it has a unique ID
 			var id = $addItem.attr('id') + '_';
 			while($('#' + id).length > 0) id += '_';
 			$addItem.attr('id', id);
-			$inputfields.append($addItem);
+			var $insertItem = $inputfields.children('.InputfieldRepeaterInsertItem');
+			if($insertItem.length) {
+				depth = getItemDepth($insertItem);
+				$addItem.addClass('InputfieldStateCollapsed')
+				var $toggleIcon = $addItem.children('.InputfieldHeader').find('.toggle-icon');
+				$toggleIcon.toggleClass($toggleIcon.attr('data-to')); 
+				$insertItem.replaceWith($addItem);
+				redoSortAll = true;
+			} else {
+				$inputfields.append($addItem);
+			}
 			$addItem.css('display', 'block');
 			adjustItemLabel($addItem, true);
 			$addLink.trigger('repeateradd', [ $addItem ]);
 		}
 
 		if(typeof cloneID == "undefined" || !cloneID) cloneID = null;
-		if(cloneID) $addLink.removeAttr('data-clone');
+		
+		if(cloneID) {
+			$addLink.removeAttr('data-clone');
+			// when data-clone contains pageID:itemID it is from a previous copy operation
+			if(cloneID.indexOf(':') > 0) {
+				var a = cloneID.split(':');
+				pageID = parseInt(a[0]); // for copy/paste
+				cloneID = parseInt(a[1]);
+			}
+		}
 
 		if(!useAjax) {
 			var $newItem = $inputfields.children('.InputfieldRepeaterNewItem'); // for noAjaxAdd mode, non-editable new item
@@ -339,15 +471,18 @@ function InputfieldRepeater($) {
 			if(newItemTotal > 0) {
 				if(newItemTotal > 1) $newItem = $newItem.slice(0, 1);
 				var $addItem = $newItem.clone(true);
+				if(depth) setItemDepth($addItem, depth);
 				addRepeaterItem($addItem);
 				$numAddInput.attr('value', newItemTotal);
 				checkMinMax($inputfieldRepeater);
 			}
+			currentlyAddingItem = false;
 			return false;
 		}
 
+		
 		// get addItem from ajax
-		var pageID = $inputfieldRepeater.attr('data-page');
+		if(!pageID) pageID = inputfieldPageID;
 		var fieldName = $inputfieldRepeater.attr('id').replace('wrap_Inputfield_', '');
 		var $spinner = $addLink.parent().find('.InputfieldRepeaterSpinner');
 		var ajaxURL = ProcessWire.config.InputfieldRepeater.editorUrl + '?id=' + pageID + '&field=' + fieldName;
@@ -355,7 +490,7 @@ function InputfieldRepeater($) {
 		$spinner.removeClass($spinner.attr('data-off')).addClass($spinner.attr('data-on'));
 
 		if(cloneID) {
-			ajaxURL += '&repeater_clone=' + cloneID;
+			ajaxURL += '&repeater_clone=' + cloneID + '&repeater_clone_to=' + inputfieldPageID;
 		} else {
 			ajaxURL += '&repeater_add=' + $addLink.attr('data-type');
 		}
@@ -388,10 +523,21 @@ function InputfieldRepeater($) {
 				// next line can remove 9/2019, as 'cloned' support will have been in InputfieldTable for awhile
 				$addItem.find('.InputfieldTableRowID').val(0); 
 			}
-			$addItem.find('.InputfieldRepeaterSort').val($inputfields.children().length);
-			$('html, body').animate({
-				scrollTop: $addItem.offset().top
-			}, 500, 'swing');
+			if(redoSortAll) {
+				$inputfields.children('.InputfieldRepeaterItem').each(function(n) {
+					setItemSort($(this), n);
+				}); 
+			} else {
+				setItemSort($addItem, $inputfields.children().length); 
+			}
+			if(depth) setItemDepth($addItem, depth);
+			if($addItem.hasClass('InputfieldStateCollapsed')) {
+				// ok
+			} else {
+				$('html, body').animate({
+					scrollTop: $addItem.offset().top
+				}, 500, 'swing');
+			}
 			updateState($addItem);
 			checkMinMax($inputfieldRepeater);
 			updateAccordion($addItem);
@@ -402,6 +548,8 @@ function InputfieldRepeater($) {
 				});
 			}
 			runScripts(data);
+			
+			setTimeout(function() { currentlyAddingItem = false; }, 500);
 		});
 
 		return false;
@@ -427,13 +575,14 @@ function InputfieldRepeater($) {
 		var $items = $repeater.children('.InputfieldContent').children('.Inputfields').children('.InputfieldRepeaterItem');
 		if(!$items.length) return false;
 		var $item = $items.eq(0);
+		var label, selector;
 		
 		if($item.hasClass('InputfieldStateCollapsed')) {
-			var label = ProcessWire.config.InputfieldRepeater.labels.openAll;
-			var selector = '.InputfieldStateCollapsed';
+			label = ProcessWire.config.InputfieldRepeater.labels.openAll;
+			selector = '.InputfieldStateCollapsed';
 		} else {
-			var label = ProcessWire.config.InputfieldRepeater.labels.collapseAll;
-			var selector = '.InputfieldRepeaterItem:not(.InputfieldStateCollapsed)';
+			label = ProcessWire.config.InputfieldRepeater.labels.collapseAll;
+			selector = '.InputfieldRepeaterItem:not(.InputfieldStateCollapsed)';
 		}
 		ProcessWire.confirm(label, function() {
 			$items.filter(selector).each(function() {
@@ -442,6 +591,152 @@ function InputfieldRepeater($) {
 		});
 		return false;
 	};
+
+	/**
+	 * Click the "insert before" button event
+	 * 
+	 */
+	var eventInsertBeforeClick = function(e) {
+		var $item = $(this).closest('.InputfieldRepeaterItem');
+		eventInsertClick($item, true);
+		e.stopPropagation();
+	};
+
+	/**
+	 * Click the "insert after" button event
+	 * 
+	 */
+	var eventInsertAfterClick = function(e) {
+		var $item = $(this).closest('.InputfieldRepeaterItem');
+		eventInsertClick($item, false);
+		e.stopPropagation();
+	};
+
+	/**
+	 * Handler for either insert before or insert after click events
+	 * 
+	 */
+	function eventInsertClick($item, insertBefore) {
+		if(currentlyAddingItem) return false;
+		currentlyAddingItem = true;
+		if(insertTimeout) clearTimeout(insertTimeout);
+		
+		var depth = getInsertItemDepth($item, insertBefore);
+		var $oldInsertItem = $item.siblings('.InputfieldRepeaterInsertItem');
+		if($oldInsertItem.length) $oldInsertItem.remove();
+		var $insertItem = $item.siblings('.InputfieldRepeaterNewItem').clone()
+			.removeClass('.InputfieldRepeaterNewItem').addClass('InputfieldRepeaterInsertItem');
+		$insertItem.attr('id', $insertItem.attr('id') + '-placeholder');
+		$insertItem.find('.InputfieldHeader').html("<i class='fa fa-spin fa-spinner'></i>");
+		if(insertBefore) {
+			$insertItem.insertBefore($item);
+		} else {
+			$insertItem.insertAfter($item);
+		}
+		if(depth > 0) setItemDepth($insertItem, depth);
+		$insertItem.show();
+		
+		if(!insertBefore && !$item.hasClass('InputfieldStateCollapsed')) scrollToItem($insertItem);
+		$insertItem.children('.InputfieldHeader').effect('highlight', {}, 500);
+		// var $addLinks = $item.parent('.Inputfields').siblings('.InputfieldRepeaterAddItem').find('.InputfieldRepeaterAddLink:eq(0)').click();
+		var $addLinks = $item.parent('.Inputfields').siblings('.InputfieldRepeaterAddItem').find('.InputfieldRepeaterAddLink');
+		if($addLinks.length === 1) {
+			// add new item now
+			$addLinks.eq(0).click();
+		} else if($addLinks.length > 1) {
+			// we need to know what type of link to add (i.e. matrix)
+			$item.trigger('repeaterinsert', [ $insertItem, $item, insertBefore ]);
+			currentlyAddingItem = false;
+		}
+	}
+
+	/**
+	 * Event called when the "Paste" link in the footer is clicked
+	 * 
+	 */
+	var eventPasteClick = function(e) {
+		var $inputfield = $(this).closest('.InputfieldRepeater');
+		// use the InputfieldRepeaterNewItem as our substitute for a contextual item
+		var $newItem = $inputfield.children('.InputfieldContent').children('.Inputfields').children('.InputfieldRepeaterNewItem');	
+		pasteRepeaterItem($newItem, false);
+		return false;
+	}; 
+
+	/**
+	 * Event when mouseout of insert before/after action
+	 * 
+	 */
+	var eventInsertMouseout = function(e) {
+		if(currentlyAddingItem) return;
+		if(insertTimeout) clearTimeout(insertTimeout);
+		var $action = $(this);
+		var $newItem = $action.data('newItem');
+		$action.removeClass('hov');
+		// var $newItem = $action.closest('.Inputfields').children('.InputfieldRepeaterInsertItem');
+		if($newItem && $newItem.length) {
+			if($newItem.hasClass('hov')) return;
+			$newItem.remove();
+		}
+	};
+
+	/**
+	 * Event when mouseover of insert before/after action
+	 * 
+	 */
+	var eventInsertMouseover = function(e) {
+		
+		if(currentlyAddingItem) return;
+		if(insertTimeout) clearTimeout(insertTimeout);
+		
+		var $action = $(this);
+		var insertBefore = $action.hasClass('InputfieldRepeaterInsertBefore');
+		var $item = $(this).closest('.InputfieldRepeaterItem');
+		var depth = 0;
+		
+		$item.siblings('.InputfieldRepeaterInsertItem').remove();
+		
+		var $newItem = $item.siblings('.InputfieldRepeaterNewItem').clone();
+		$newItem.addClass('InputfieldRepeaterInsertItem').attr('id', $newItem.attr('id') + '-insert'); 
+		
+		if(insertBefore) {
+			depth = getInsertBeforeItemDepth($item);
+			$newItem.addClass('InputfieldRepeaterInsertItemBefore');//.insertBefore($item);
+			$newItem.addClass('hov');
+		} else {
+			depth = getInsertAfterItemDepth($item);
+			$newItem.addClass('InputfieldRepeaterInsertItemAfter');//.insertAfter($item);
+		}
+		
+		$newItem.find('.InputfieldRepeaterItemControls').hide();
+		$newItem.find('.InputfieldRepeaterItemLabel').text(ProcessWire.config.InputfieldRepeater.labels.insertHere);
+		
+		$action.addClass('hov').data('newItem', $newItem);
+		
+		setItemDepth($newItem, depth);
+		
+		insertTimeout = setTimeout(function() {
+			insertTimeout = null;
+			if(!$action.hasClass('hov')) {
+				$newItem.remove();
+				return;
+			} else if(insertBefore) {
+				$newItem.insertBefore($item);
+			} else {
+				$newItem.addClass('hov').insertAfter($item);
+			}
+			//$newItem.addClass('hov');
+			$newItem.on('mouseover', function() {
+				$(this).addClass('hov');
+			}).on('click', function(e) {
+				e.stopPropagation();
+				eventInsertClick($item, insertBefore);
+			}).on('mouseout', function() {
+				$(this).removeClass('hov').remove();
+			});
+			$newItem.slideDown();
+		}, 1000); 
+	};
+	
 	
 	/*** GENERAL FUNCTIONS **********************************************************************************/
 	
@@ -484,7 +779,7 @@ function InputfieldRepeater($) {
 		});
 		
 		if(useScroll && hasOpen) {
-			$('html, body').animate({scrollTop: $item.offset().top - 10}, 0);
+			scrollToItem($item);
 		}
 		
 		return true;
@@ -524,7 +819,47 @@ function InputfieldRepeater($) {
 			}
 		}
 	}
+	
+	function getItemLabel($item) {
+		return $item.children('.InputfieldHeader').children('.InputfieldRepeaterItemLabel');
+	}
+	
+	/*** SORT FUNCTIONS ***********************************************************************************/
+	
+	function setItemSort($item, sort) {
+		var $input = getItemSortInput($item);
+		if($input.length) $input.val(sort);
+	}
+	
+	function getItemSort($item) {
+		var $input = getItemSortInput($item);
+		if($input.length) return parseInt($input.val());
+		return -1;
+	}
+	
+	function getItemSortInput($item) {
+		if(!$item.hasClass('InputfieldRepeaterItem')) $item = $item.closest('.InputfieldRepeaterItem');
+		return $item.children('.InputfieldContent').children('.Inputfields')
+			.children('.InputfieldRepeaterItemSort').find('.InputfieldRepeaterSort');
+	}
 
+	/**
+	 * Is item allowed to be sorted to its current position?
+	 * 
+	 * @param $item
+	 * 
+	 */
+	function sortableItemAllowed($item) {
+		if($item.hasClass('InputfieldRepeaterMatrixItem')) {
+			if(typeof InputfieldRepeaterMatrixTools !== "undefined") {
+				return InputfieldRepeaterMatrixTools.sortableItemAllowed($item);
+			}
+		}
+		return true;
+	}
+
+	/*** DEPTH FUNCTIONS **********************************************************************************/
+	
 	/**
 	 * Determine the sortable depth of a repeater item and either return it or apply it
 	 * 
@@ -536,7 +871,8 @@ function InputfieldRepeater($) {
 	 */
 	function sortableDepth(ui, maxDepth, updateNow) {
 
-		var $depth = ui.item.find('.InputfieldRepeaterDepth');
+		var $wrap = ui.item.children('.InputfieldContent').children('.Inputfields').children('.InputfieldRepeaterItemDepth');
+		var $depth = $wrap.find('input');
 		var depth = -1;
 		var prevDepth = parseInt($depth.val());
 		var left = ui.position.left;
@@ -550,24 +886,147 @@ function InputfieldRepeater($) {
 			// console.log('increase depth to: ' + depth);
 		}
 
-		if(depth < 1) {
-			depth = 0;
-		} else if(depth > maxDepth) {
-			depth = maxDepth;
-		}
-
 		if(updateNow) {
-			if(depth) {
-				ui.item.css('margin-left', (depth * depthSize) + 'px');
-			} else {
-				ui.item.css('margin-left', 0);
-			}
-
-			$depth.val(depth);
+			depth = setItemDepth(ui.item, depth, maxDepth);
 			ui.item.children('.InputfieldHeader').removeClass('ui-state-error');
 		}
 
 		return depth;
+	}
+
+	/**
+	 * Set repeater item depth
+	 * 
+	 * @param $item Repeater item
+	 * @param int depth Depth to set
+	 * @param int maxDepth Max depth (you can optionally omit this if depth is already validated for the max)
+	 * @param bool noValidate Specify true to prevent depth validation, otherwise omit
+	 * @returns int Returns adjusted depth or -1 on fail
+	 * 
+	 */
+	function setItemDepth($item, depth, maxDepth, noValidate) {
+		
+		noValidate = typeof noValidate === "undefined" ? false : noValidate;
+		
+		if(depth < 1) depth = 0;
+		if(typeof maxDepth !== 'undefined' && depth > maxDepth) depth = maxDepth;
+		if(!$item.hasClass('InputfieldRepeaterItem')) $item = $item.closest('.InputfieldRepeaterItem');
+		if(!$item.length) return -1;
+	
+		var $depthInput = $item.children('.InputfieldContent').children('.Inputfields')
+			.children('.InputfieldRepeaterItemDepth').find('input');
+		
+		if(!$depthInput.length && !$item.hasClass('InputfieldRepeaterNewItem')) {
+			console.log('Cannot find depth input for ' + $item.attr('id'));
+		}
+
+		if(!noValidate && $item.closest('.InputfieldRepeater').hasClass('InputfieldRepeaterFamilyFriendly')) {
+			var $prevItem = $item.prev('.InputfieldRepeaterItem:not(.InputfieldRepeaterNewItem)'); 
+			if($prevItem.length) {
+				var prevItemDepth = parseInt($prevItem.attr('data-depth'));
+				if(depth - prevItemDepth > 1) depth = prevItemDepth + 1;
+			} else {
+				depth = 0;
+			}
+		}
+	
+		$depthInput.val(depth);
+		$item.attr('data-depth', depth);
+		
+		if(depth > 0) {
+			$item.css('padding-left', (depth * depthSize) + 'px');
+			$item.addClass('InputfieldRepeaterItemHasDepth');
+		} else {
+			$item.css('padding-left', 0);
+			$item.removeClass('InputfieldRepeaterItemHasDepth');
+		}
+		
+		return depth;
+	}
+
+	/**
+	 * Get repeater item depth
+	 * 
+	 * @param $item Repeater item
+	 * @returns int Returns depth or -1 on fail
+	 * 
+	 */
+	function getItemDepth($item) {
+		if(!$item.hasClass('InputfieldRepeaterItem')) $item = $item.closest('.InputfieldRepeaterItem');
+		if(!$item.length) return -1;
+		return parseInt($item.attr('data-depth'));
+	}
+
+	/**
+	 * Get depth for a new item if it were to be inserted before/after given $contextItem
+	 * 
+	 * @param $contextItem
+	 * @param insertBefore
+	 * @returns {Number}
+	 * 
+	 */
+	function getInsertItemDepth($contextItem, insertBefore) {
+		var depth = 0;
+		if(insertBefore) {
+			depth = getItemDepth($contextItem);
+		} else {
+			var $nextItem = $contextItem.next('.InputfieldRepeaterItem');
+			depth = getItemDepth($contextItem);
+			if($nextItem.hasClass('InputfieldRepeaterNewItem')) {
+				// the default hidden new item is not useful for identifying depth
+				if(!$nextItem.hasClass('InputfieldRepeaterInsertItem')) $nextItem = null;
+			}
+			var nextDepth = $nextItem && $nextItem.length ? getItemDepth($nextItem) : depth;
+			if(nextDepth > depth) depth = nextDepth;
+		}
+		return depth;
+	}
+	
+	function getInsertBeforeItemDepth($item) {
+		return getInsertItemDepth($item, true);
+	}
+	
+	function getInsertAfterItemDepth($item) {
+		return getInsertItemDepth($item, false);
+	}
+
+	/**
+	 * Get all depth children for given repeater item
+	 * 
+	 * @param $item Repeater item
+	 * @returns {Array}
+	 * 
+	 */
+	function getDepthChildren($item) {
+		
+		var children = [];
+		var n = 0;
+		var startDepth = parseInt($item.attr('data-depth'));
+		var pageId = $item.attr('data-page');
+		var pageIdClass = 'Inputfield_repeater_item_' + pageId;
+
+		// ui.sortable adds additional copies of $item, so make sure we have the last one
+		while($item.hasClass(pageIdClass)) {
+			var $nextItem = $item.next('.InputfieldRepeaterItem:not(.InputfieldRepeaterNewItem)');
+			if(!$nextItem.length || !$nextItem.hasClass(pageIdClass)) break;
+			$item = $nextItem;
+		}
+		
+		do {
+			// var $child = $item.next('.InputfieldRepeaterItem:not(.' + pageIdClass + '):not(.InputfieldRepeaterNewItem)');
+			var $child = $item.next('.InputfieldRepeaterItem:not(.InputfieldRepeaterNewItem)');
+			if(!$child.length) break;
+			
+			var childDepth = parseInt($child.attr('data-depth'));
+			if(!childDepth || childDepth <= startDepth) break;
+			
+			$item = $child;
+			children[n] = $child;
+			n++;
+			
+		} while(true);
+		
+		return children;
 	}
 	
 	/*** INIT FUNCTIONS **********************************************************************************/
@@ -576,22 +1035,28 @@ function InputfieldRepeater($) {
 	 * Initialize repeater item depths 
 	 * 
 	 * Applies a left-margin to repeater items consistent with with value in 
-	 * each item's input.InputfieldRepeaterDepth hidden input. 
+	 * each item's '.InputfieldRepeaterItemDepth input' hidden input. 
 	 * 
 	 * @param $inputfieldRepeater
 	 * 
 	 */
 	function initDepths($inputfieldRepeater) {
-		$inputfieldRepeater.find('.InputfieldRepeaterDepth').each(function() {
-			var $depth = $(this);
+		$inputfieldRepeater.find('.InputfieldRepeaterItemDepth').each(function() {
+			var $wrap = $(this);
+			var $depth = $wrap.find('input');
 			var depth = $depth.val();
 			var $item = $depth.closest('.InputfieldRepeaterItem');
-			var currentLeft = $item.css('margin-left');
+			var currentLeft = $item.css('padding-left');
 			if(currentLeft == 'auto') currentLeft = 0;
 			currentLeft = parseInt(currentLeft);
 			var targetLeft = depth * depthSize;
 			if(targetLeft != currentLeft) {
-				$item.css('margin-left', targetLeft + 'px');
+				$item.css('padding-left', targetLeft + 'px');
+			}
+			if(targetLeft > 0) {
+				$item.addClass('InputfieldRepeaterItemHasDepth');
+			} else {
+				$item.removeClass('InputfieldRepeaterItemHasDepth');
 			}
 		});
 		$inputfieldRepeater.children('.InputfieldContent').css('position', 'relative');
@@ -607,12 +1072,15 @@ function InputfieldRepeater($) {
 	function initSortable($inputfieldRepeater, $inputfields) {
 
 		var maxDepth = parseInt($inputfieldRepeater.attr('data-depth'));
+		var depthChildren = [];
+		var startDepth = 0;
+		var familyFriendly = $inputfieldRepeater.hasClass('InputfieldRepeaterFamilyFriendly');
 		var sortableOptions = {
 			items: '> li:not(.InputfieldRepeaterNewItem)',
 			handle: '.InputfieldRepeaterDrag',
 			start: function(e, ui) {
 				ui.item.find('.InputfieldHeader').addClass("ui-state-highlight");
-
+			
 				// CKEditor doesn't like being sorted, do destroy when sort starts, and reload after sort
 				ui.item.find('textarea.InputfieldCKEditorNormal.InputfieldCKEditorLoaded').each(function() {
 					$(this).removeClass('InputfieldCKEditorLoaded');
@@ -625,11 +1093,40 @@ function InputfieldRepeater($) {
 				ui.item.find('.InputfieldTinyMCE textarea').each(function() {
 					tinyMCE.execCommand('mceRemoveControl', false, $(this).attr('id'));
 				});
+			
+				if(familyFriendly && maxDepth > 0) {
+					// remember and hide depth children
+					startDepth = parseInt(ui.item.attr('data-depth'));
+					depthChildren = getDepthChildren(ui.item);
+					for(var n = 0; n < depthChildren.length; n++) {
+						depthChildren[n].slideUp('fast');
+					}
+				}
 			},
 
 			stop: function(e, ui) {
 				if(maxDepth > 0) {
 					sortableDepth(ui, maxDepth, true);
+				}
+				
+				if(!sortableItemAllowed(ui.item)) return false;
+				
+				// update/move and show depth children
+				if(maxDepth > 0 && familyFriendly && depthChildren.length) {
+					var $item = ui.item;
+					var stopDepth = parseInt($item.attr('data-depth'));
+					var diffDepth = stopDepth - startDepth;
+					for(var n = 0; n < depthChildren.length; n++) {
+						var $child = depthChildren[n];
+						if(diffDepth != 0) {
+							var itemDepth = getItemDepth($child);
+							setItemDepth($child, itemDepth + diffDepth, maxDepth, true);
+						}
+						$item.after($child);
+						$child.slideDown('fast');
+						$item = $child;
+					}
+					depthChildren = [];
 				}
 
 				ui.item.find('.InputfieldHeader').removeClass("ui-state-highlight");
@@ -646,6 +1143,8 @@ function InputfieldRepeater($) {
 				ui.item.find('.InputfieldTinyMCE textarea').each(function() {
 					tinyMCE.execCommand('mceAddControl', false, $(this).attr('id'));
 				});
+				
+				$(this).closest('.InputfieldRepeater').trigger('sorted', [ ui.item ]);
 			}
 		};
 
@@ -657,10 +1156,10 @@ function InputfieldRepeater($) {
 				var $header = ui.item.children('.InputfieldHeader');
 				if(depth > maxDepth) {
 					// beyond max depth allowed
-					$header.addClass('ui-state-error');
+					$header.addClass('ui-state-error InputfieldRepeaterItemOOB'); // OOB: Out Of Bounds
 				} else if($header.hasClass('ui-state-error')) {
 					// no problems
-					$header.removeClass('ui-state-error');
+					$header.removeClass('ui-state-error InputfieldRepeaterItemOOB');
 				}
 			};
 		} else {
@@ -687,8 +1186,11 @@ function InputfieldRepeater($) {
 	function initHeaders($headers, $inputfieldRepeater, renderValueMode) {
 		
 		var $clone = $("<i class='fa fa-copy InputfieldRepeaterClone'></i>").css('display', 'block');
+		// var $paste = $("<i class='fa fa-paste InputfieldRepeaterPaste'></i>").css('display', 'block');
 		var $delete = $("<i class='fa fa-trash InputfieldRepeaterTrash'></i>");
 		var $toggle = $("<i class='fa InputfieldRepeaterToggle' data-on='fa-toggle-on' data-off='fa-toggle-off'></i>");
+		var $insertAfter = $("<i class='fa fa-download InputfieldRepeaterInsertAfter'></i>");
+		var $insertBefore = $("<i class='fa fa-upload InputfieldRepeaterInsertBefore'></i>"); 
 		var cfg = ProcessWire.config.InputfieldRepeater;
 		var allowClone = !$inputfieldRepeater.hasClass('InputfieldRepeaterNoAjaxAdd');
 		var allowSettings = $inputfieldRepeater.hasClass('InputfieldRepeaterHasSettings');
@@ -697,6 +1199,9 @@ function InputfieldRepeater($) {
 			$toggle.attr('title', cfg.labels.toggle);
 			$delete.attr('title', cfg.labels.remove);
 			$clone.attr('title', cfg.labels.clone);
+			// $paste.attr('title', 'Paste'); // @todo
+			$insertBefore.attr('title', cfg.labels.insertBefore);
+			$insertAfter.attr('title', cfg.labels.insertAfter);
 		}
 		
 		if(allowSettings) {
@@ -706,11 +1211,13 @@ function InputfieldRepeater($) {
 		$headers.each(function() {
 			var $t = $(this);
 			if($t.hasClass('InputfieldRepeaterHeaderInit')) return;
-			var icon = 'fa-arrows';
 			var $item = $t.parent();
+			var icon = $item.attr('data-icon'); 
+			if(typeof icon === "undefined" || !icon.length) icon = 'fa-arrows';
+			if(icon.indexOf('fa-') !== 0) icon = 'fa-' + icon;
 			if($item.hasClass('InputfieldRepeaterNewItem')) {
 				// noAjaxAdd mode
-				icon = 'fa-plus';
+				icon = 'fa-plus-circle';
 				$t.addClass('ui-priority-secondary');
 			}
 			$t.addClass('ui-state-default InputfieldRepeaterHeaderInit');
@@ -721,18 +1228,25 @@ function InputfieldRepeater($) {
 					.addClass($t.parent().hasClass('InputfieldRepeaterOff') ? 'fa-toggle-off' : 'fa-toggle-on');
 				var $deleteControl = $delete.clone(true);
 				var $collapseControl = $t.find('.toggle-icon');
+				var $insertBeforeControl = $insertBefore.clone(true);
+				var $insertAfterControl = $insertAfter.clone(true);
 				$controls.prepend($collapseControl);
-				if($t.closest('.InputfieldRepeater').hasClass('InputfieldRepeaterHasSettings')) { // intentionally not using allowSettings var
+				$controls.prepend($insertBeforeControl);
+				$controls.prepend($insertAfterControl);
+				var $closestRepeater = $t.closest('.InputfieldRepeater');
+				if($closestRepeater.hasClass('InputfieldRepeaterHasSettings')) { // intentionally not using allowSettings var
 					var $settingsToggle = $("<i class='fa fa-gear InputfieldRepeaterSettingsToggle ui-priority-secondary'></i>")
 						.attr('title', cfg.labels.settings); 
 					$controls.prepend($settingsToggle);
 				}
-				if(allowClone) $controls.prepend($clone.clone(true));
+				if(allowClone || !$closestRepeater.hasClass('InputfieldRepeaterNoAjaxAdd')) {
+					$controls.prepend($clone.clone(true));
+					// $controls.prepend($paste.clone(true));
+				}
 				$controls.prepend($toggleControl);
 				$controls.prepend($deleteControl);
 				$t.prepend($controls);
 				$controls.css('background-color', $t.css('background-color'));
-				
 			}
 			adjustItemLabel($item, false);
 		});
@@ -745,20 +1259,22 @@ function InputfieldRepeater($) {
 	 * 
 	 */
 	function initRepeater($this) {
+		var $inputfields, $inputfieldRepeater, isItem;
 
 		if($this.hasClass('InputfieldRepeaterItem')) {
 			// single repeater item
-			var $inputfields = $this;
-			var $inputfieldRepeater = $this.closest('.InputfieldRepeater');
-			var isItem = true;
+			$inputfields = $this;
+			$inputfieldRepeater = $this.closest('.InputfieldRepeater');
+			isItem = true;
 		} else {
 			// enter repeater
-			var $inputfields = $this.find('.Inputfields:eq(0)');
-			var $inputfieldRepeater = $this;
-			var isItem = false;
+			$inputfields = $this.find('.Inputfields:eq(0)');
+			$inputfieldRepeater = $this;
+			isItem = false;
 		}
 
 		if($inputfields.hasClass('InputfieldRepeaterInit')) return;
+		if($('body').hasClass('touch-device')) $inputfieldRepeater.addClass('InputfieldRepeaterLoudControls');
 		
 		var renderValueMode = $inputfields.closest('.InputfieldRenderValueMode').length > 0;
 
@@ -887,6 +1403,15 @@ function InputfieldRepeater($) {
 	}
 
 	/**
+	 * Scroll to repeater item
+	 * 
+	 * @param $item
+	 */
+	function scrollToItem($item) {
+		$('html, body').animate({scrollTop: $item.offset().top - 10}, 250, 'swing');
+	}
+
+	/**
 	 * Run any scripts in the given HTML ajax data since jQuery will strip them
 	 * 
 	 * @param data
@@ -925,6 +1450,107 @@ function InputfieldRepeater($) {
 	}
 
 	/**
+	 * Clone a repeater item in place
+	 * 
+	 * @param $item
+	 * @param pasteValue Optional cookie object value that was previously copied
+	 * 
+	 */
+	function cloneRepeaterItem($item, insertBefore, pasteValue) {
+		
+		if(typeof pasteValue === "undefined") pasteValue = null;
+		
+		var actionName = pasteValue === null ? 'clone' : 'paste';
+		var $addLink = $item.closest('.InputfieldRepeater').children('.InputfieldContent')
+			.children('.InputfieldRepeaterAddItem').find('.InputfieldRepeaterAddLink:eq(0)');
+		// $('html, body').animate({ scrollTop: $addLink.offset().top - 100}, 250, 'swing');
+
+		$item.siblings('.InputfieldRepeaterInsertItem').remove();
+		
+		var depth = getItemDepth($item);
+		var $newItem = $item.hasClass('InputfieldRepeaterNewItem') ? $item.clone() : $item.siblings('.InputfieldRepeaterNewItem').clone();
+		var $nextItem = $item.next('.InputfieldRepeaterItem');
+		var nextItemDepth = $nextItem.length ? getItemDepth($nextItem) : depth;
+		var $prevItem = $item.prev('.InputfieldRepeaterItem');
+		var prevItemDepth = $prevItem.length ? getItemDepth($prevItem) : depth;
+	
+		if(typeof insertBefore === "undefined") {
+			insertBefore = depth < nextItemDepth;
+		}
+		
+		$newItem.addClass('InputfieldRepeaterInsertItem').attr('id', $newItem.attr('id') + '-' + actionName); // .removeClass('InputfieldRepeaterNewItem); ?
+		$newItem.find('.InputfieldHeader').html("<i class='fa fa-spin fa-spinner'></i>");
+		
+		if(insertBefore) {
+			depth = getInsertBeforeItemDepth($item);
+			$newItem.addClass('InputfieldRepeaterInsertItemBefore');
+			$newItem.insertBefore($item);
+		} else {
+			depth = getInsertAfterItemDepth($item);
+			$newItem.addClass('InputfieldRepeaterInsertItemAfter');
+			$newItem.insertAfter($item);
+		}
+		
+		setItemDepth($newItem, depth);
+		
+		$newItem.show();
+		
+		if(actionName === 'paste') {
+			// data-clone attribute with 'pageID:itemID' indicates page ID and item ID to clone
+			$addLink.attr('data-clone', pasteValue.page + ':' + pasteValue.item).click();
+		} else {
+			// current page ID is implied when only itemID is supplied
+			$addLink.attr('data-clone', $item.attr('data-page')).click();
+		}
+	}
+
+	/**
+	 * Paste previously copied item
+	 * 
+	 * @param $item Item to insert before or after
+	 * @param insertBefore True to insert before, false to insert after
+	 * 
+	 */
+	function pasteRepeaterItem($item, insertBefore) {
+		var $inputfield = $item.closest('.InputfieldRepeater');
+		var fieldName = $inputfield.attr('data-name');
+		var cookieName = copyPasteCookieName(fieldName);
+		var copyValue = jQuery.cookie(cookieName); 
+		if(copyValue) cloneRepeaterItem($item, insertBefore, copyValue);
+	}
+
+	/**
+	 * Copy a repeater item to memory
+	 * 
+	 * @param $item
+	 * 
+	 */
+	function copyRepeaterItem($item) {
+		var $title = $('#Inputfield_title');
+		var $name = $('#Inputfield__pw_page_name');
+		var $inputfield = $item.closest('.InputfieldRepeater');
+		var fieldName = $inputfield.attr('data-name');
+		var copyValue = {
+			page: parseInt($inputfield.attr('data-page')),
+			item: parseInt($item.attr('data-page')),
+			field: fieldName,
+		};
+		var cookieName = copyPasteCookieName(fieldName);
+		jQuery.cookie(cookieName, copyValue);
+	}
+
+	/**
+	 * Get the copy/paste cookie name
+	 * 
+	 * @param fieldName
+	 * @returns {string}
+	 * 
+	 */
+	function copyPasteCookieName(fieldName) {
+		return fieldName + '_copy';
+	}
+
+	/**
 	 * Initialization for document.ready
 	 * 
 	 */
@@ -938,13 +1564,21 @@ function InputfieldRepeater($) {
 			.on('reloaded', '.InputfieldRepeater', eventReloaded)
 			.on('click', '.InputfieldRepeaterTrash', eventDeleteClick)
 			.on('dblclick', '.InputfieldRepeaterTrash', eventDeleteDblClick)
-			.on('click', '.InputfieldRepeaterClone', eventCloneClick)
+			//.on('click', '.InputfieldRepeaterClone', eventCloneClick)
+			.on('click', '.InputfieldRepeaterClone', eventCopyCloneClick)
+			.on('click', '.InputfieldRepeaterPaste', eventPasteClick)
 			.on('click', '.InputfieldRepeaterSettingsToggle', eventSettingsClick)
 			.on('dblclick', '.InputfieldRepeaterToggle', eventOpenAllClick)
 			.on('click', '.InputfieldRepeaterToggle', eventToggleClick)
 			.on('opened', '.InputfieldRepeaterItem', eventItemOpened)
 			.on('closed', '.InputfieldRepeaterItem', eventItemClosed)
-			.on('openReady', '.InputfieldRepeaterItem', eventItemOpenReady);
+			.on('openReady', '.InputfieldRepeaterItem', eventItemOpenReady)
+			.on('click', '.InputfieldRepeaterInsertBefore', eventInsertBeforeClick)
+			.on('click', '.InputfieldRepeaterInsertAfter', eventInsertAfterClick)
+			.on('mouseover', '.InputfieldRepeaterInsertBefore', eventInsertMouseover)
+			.on('mouseover', '.InputfieldRepeaterInsertAfter', eventInsertMouseover)
+			.on('mouseout', '.InputfieldRepeaterInsertBefore', eventInsertMouseout)
+			.on('mouseout', '.InputfieldRepeaterInsertAfter', eventInsertMouseout);
 	}
 	
 	init();

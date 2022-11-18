@@ -16,12 +16,12 @@
  * 
  * #pw-summary Provides a means to get user input from URLs, GET, POST, and COOKIE variables and more.
  *
- * @link http://processwire.com/api/variables/input/ Offical $input API variable Documentation
+ * @link https://processwire.com/api/ref/wire-input/ Offical $input API variable Documentation
  * 
  * @property array|string[] $urlSegments Retrieve all URL segments (array). This requires url segments are enabled on the template of the requested page. You can turn it on or off under the url tab when editing a template. #pw-group-URL-segments
  * @property WireInputData $post POST variables
  * @property WireInputData $get GET variables
- * @property WireInputData $cookie COOKIE variables
+ * @property WireInputDataCookie $cookie COOKIE variables
  * @property WireInputData $whitelist Whitelisted variables
  * @property int $pageNum Current page number (where 1 is first) #pw-group-URLs
  * @property string $urlSegmentsStr String of current URL segments, separated by slashes, i.e. a/b/c  #pw-internal
@@ -34,6 +34,17 @@
  * @property string $urlSegment1 First URL segment #pw-group-URL-segments
  * @property string $urlSegment2 Second URL segment #pw-group-URL-segments
  * @property string $urlSegment3 Third URL segment, and so on... #pw-group-URL-segments
+ * @property string $urlSegmentLast Last URL segment (since 3.0.155) #pw-group-URL-segments
+ * @property string $urlSegmentFirst Alias of $urlSegment1 (since 3.0.155) #pw-group-URL-segments
+ * 
+ * @method string|int|bool urlSegment1($get = '') Same as urlSegment() method but apply only to 1st URL segment. (since 3.0.155) #pw-group-URL-segments
+ * @method string|int|bool urlSegment2($get = '') Same as urlSegment() method but apply only to 2nd URL segment. (since 3.0.155) #pw-group-URL-segments
+ * @method string|int|bool urlSegment3($get = '') Same as urlSegment() method but apply only to 3rd URL segment. (since 3.0.155) #pw-group-URL-segments
+ * @method string|int|bool urlSegmentLast($get = '') Same as urlSegment() method but apply only to last URL segment. (since 3.0.155) #pw-group-URL-segments
+ * @method string|int|bool urlSegmentFirst($get = '') Same as urlSegment() method but apply only to first URL segment. (since 3.0.155) #pw-group-URL-segments
+ * 
+ * Note that properties and methods that end with numbers 1-3 above (like urlSegment1, urlSegment1(), etc.)
+ * continue for as many numbers as the system supports, so you may go beyond 3 where supported. 
  *
  */
 class WireInput extends Wire {
@@ -83,6 +94,14 @@ class WireInput extends Wire {
 	protected $lazy = false;
 
 	/**
+	 * Recognized regex start/end delimiters 
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $regexDelims = array('/', '!', '%', '#', '@');
+
+	/**
 	 * @var array
 	 * 
 	 */
@@ -94,6 +113,8 @@ class WireInput extends Wire {
 		'DELETE' => 'DELETE',
 		'OPTIONS' => 'OPTIONS',
 		'PATCH' => 'PATCH',
+		'CONNECT' => 'CONNECT',
+		'TRACE' => 'TRACE',
 	);
 
 	/**
@@ -109,6 +130,8 @@ class WireInput extends Wire {
 	 * Set for lazy loading
 	 * 
 	 * Must be called before accessing any get/post/cookie input
+	 * 
+	 * #pw-internal
 	 * 
 	 * @param bool $lazy
 	 * 
@@ -267,7 +290,45 @@ class WireInput extends Wire {
 	/**
 	 * Retrieve a named COOKIE variable value or all COOKIE variables
 	 * 
-	 * Always sanitize (and validate where appropriate) any values from user input.
+	 * Please see the [cookie API reference page](https://processwire.com/api/ref/wire-input-data-cookie/) for 
+	 * additional documentation on how to get and set cookies and cookie options. 
+	 * 
+	 * ~~~~~
+	 * // setting cookies
+	 * $input->cookie->foo = 'bar'; // set with default options (expires with session)
+	 * $input->cookie->set('foo', 'bar'); // same as above
+	 * $input->cookie->set('foo', bar', 86400); // expire after 86400 seconds (1 day)
+	 * $input->cookie->set('foo', 'bar', [ 'age' => 86400, 'path' => $page->url ]); 
+	 * 
+	 * // getting cookies
+	 * $val = $input->cookie->foo;
+	 * $val = $input->cookie->get('foo'); // same as above
+	 * $val = $input->cookie->text('foo'); // get and use text sanitizer
+	 * 
+	 * // removing cookies
+	 * $input->cookie->remove('foo'); 
+	 * 
+	 * // getting cookie options
+	 * $array = $input->cookie->options();
+	 * print_r($array); // see all options
+	 * 
+	 * // setting cookie options (to use in next $input->cookie->set call)
+	 * $input->cookie->options('age', 86400); // set default age to 1 day
+	 * $input->cookie->options([ // set multiple options
+	 *   'age' => 86400, 
+	 *   'path' => $page->url, 
+	 *   'domain' => 'www.domain.com',
+	 * ]); 
+	 * 
+	 * // setting default options (in /site/config.php):
+	 * $config->cookieOptions = [
+	 *   'age' => 604800, // 1 week
+	 *   'httponly' => true, // make visible to PHP but not JS
+	 *    // and so on
+	 * ]; 
+	 * ~~~~~
+	 * 
+	 * Cookies are a form of user input, so always sanitize (and validate where appropriate) any values. 
 	 * 
 	 * The following optional features are available in ProcessWire version 3.0.125 and newer:
 	 *
@@ -319,7 +380,7 @@ class WireInput extends Wire {
 	 * 
 	 * The whitelist is a list of variables specifically set by the application as sanitized for use elsewhere in the application.
 	 * This whitelist is not specifically used by ProcessWire unless you populate it from your templates or the API. 
-	 * When populated, it is used by the MarkupPagerNav module (for instance) to ensure that sanitizedd query string (GET) variables 
+	 * When populated, it is used by the MarkupPagerNav module (for instance) to ensure that sanitized query string (GET) variables 
 	 * are maintained across paginations. 
 	 * 
 	 * ~~~~~
@@ -352,17 +413,59 @@ class WireInput extends Wire {
 	}
 
 	/**
-	 * Retrieve the URL segment with the given index (starting from 1)
-	 *
+	 * Retrieve matching URL segment number or pattern
+	 * 
+	 * In all ProcessWire versions  this method accepts a 1-based index and returns the 
+	 * corresponding URL segment, where 1 is first URL segment, 2 is second, etc.
+	 * 
+	 * In ProcessWire versions 3.0.155 and newer, this method also does the following:
+	 * 
+	 * - If given a negative number, it will retrieve from the end of the URL segments. 
+	 *   For example, if given -1 it will return the last URL segment, -2 will return second
+	 *   to last, and so on. 
+	 * 
+	 * - If given a full URL segment (i.e. “foo”) it will return the 1-based index at which that
+	 *   segment exists, or 0 if not present. 
+	 * 
+	 * - If given URL segment followed by equals sign, i.e. “foo=” it will return the next URL 
+	 *   segment that comes after it. If equals sign comes before URL segment, i.e. “=bar”, it 
+	 *   will return the URL segment that came before it. This lets you create “key=value” 
+	 *   type relationships with URL segments. For example, an argument of “foo=” would return
+	 *   the segment “bar” when applied to URL /path/to/page/foo/bar/.
+	 * 
+	 * - If given a wildcard string, it will return the first matching URL segment. For example,
+	 *   the wildcard string `foo-*` would match the first URL segment to begin with “foo-”, 
+	 *   so any of these segments would match & be returned: `foo-bar`, `foo-12345`, `foo-baz123`. 
+	 *   A wildcard string of `*bar` would match anything ending with “bar”, i.e. it would match
+	 *   and return `foo-bar`, `foobar`, `baz_123bar`, etc.
+	 * 
+	 * - If given a wildcard string with parenthesis in it, then only the portion in parenthesis 
+	 *   is returned for the first matching URL segment. For example, `foo-(*)` would match the
+	 *   URL segment `foo-baz123` and would return just the `baz123` portion. 
+	 * 
+	 * - If given a regular expression (PCRE regex), the behavior is the same as with wildcards, 
+	 *   except that your regex is used to perform the match. If there are capturing parenthesis
+	 *   in the regex then the first captured text is returned rather than the whole URL segment. 
+	 *   To specify a regex, choose one of the following characters as your opening and closing
+	 *   delimiters: `/`, `!`, `%`, `#`, `@`. 
+	 * 
+	 * - If you want to focus any of the above options upon a URL segment at a specific index,
+	 *   then you can append the index number to the method name. For example, if you want it to
+	 *   just focus on URL segment #1, then call `$input->urlSegment1(…)`, or for URL segment #2
+	 *   you would call `$input->urlSegment2(…)`, and so on. 
+	 * 
+	 * Please also note the following about URL segments: 
+	 *   
 	 * - URL segments must be enabled in the template settings (for template used by the page).
-	 * - The index is 1 based (not 0 based).
-	 * - If no index is provided, 1 is assumed. 
+	 * - When using index numbers, note that it is 1-based. There is no 0 index for URL segments.
+	 * - If no arguments are provided, it assumes you ar asking for the first (1) URL segment. 
 	 * - The maximum segments allowed can be adjusted in your `$config->maxUrlSegments` setting.
 	 * - URL segments are populated by ProcessWire automatically on each request. 
 	 * - URL segments are already sanitized as page names. 
+	 * - Strongly recommended: throw a 404 when encountering URL segments you do not recognize.
 	 * 
 	 * ~~~~~
-	 * // Produce different output in template depending on URL segment
+	 * // Get first URL segment and use it to determine output
 	 * $action = $input->urlSegment(1); 
 	 * if($action == 'photos') {
 	 *   // display photos
@@ -374,18 +477,174 @@ class WireInput extends Wire {
 	 * } else {
 	 *   // default or display main page
 	 * }
+	 *
+	 * // All following examples require PW 3.0.155+. 
+	 * 
+	 * // Examples 1-5 below assume current URL is /path/to/page/foo/bar
+	 * // and that /foo/bar is the URL segments portion of the URL.
+	 * 
+	 * // 1. Check if URL segment “foo” is present 
+	 * if($input->urlSegment('foo')) {
+	 *   // “foo” is present as a URL segment
+	 * }
+	 * 
+	 * // 2. Get index of matching URL segment 
+	 * if($input->urlSegment('foo') === 1) {
+	 *   // “foo” is first URL segment
+	 * }
+	 * 
+	 * // 3. Get last URL segment 
+	 * if($input->urlSegment(-1) === 'bar') {
+	 *   // “bar” is last URL segment
+	 * }
+	 * 
+	 * // 4. Get next URL segment
+	 * $next = $input->urlSegment('foo='); // returns 'bar'
+	 * 
+	 * // 5. Get previous URL segment
+	 * $prev = $input->urlSegment('=bar'); // returns 'foo'
+	 * 
+	 * // Examples 6-8 below assume current URL is /path/to/page/sort-date/
+	 * // where /sort-date/ is the URL segment. 
+	 * 
+	 * // 6. Match URL segment using wildcard
+	 * $sort = $input->urlSegment('sort-*');
+	 * if($sort === 'sort-title') {
+	 *   // sort by title
+	 * } else if($sort === 'sort-date') {
+	 *   // sort by date
+	 * } else if(strlen($sort)) {
+	 *   // unknown sort value, throw 404 or fallback to default
+	 * } else {
+	 *   // no sort specified, use default
+	 * }
+	 * 
+	 * // 7. Match using wildcard and parenthesis
+	 * $sort = $input->urlSegment('sort-(*)');
+	 * if($sort === 'title') {
+	 *   // sort by title
+	 * } else if($sort === 'date') {
+	 *   // sort by date
+	 * } else if(strlen($sort)) {
+	 *   // unknown sort value, throw 404?
+	 * } else {
+	 *   // no sort specified, use default
+	 * }
+	 * 
+	 * // 8. Match using regular expression
+	 * $sort = $input->urlSegment('/^sort-(.+)$/'); 
+	 * if($sort === 'title') {
+	 *   // same if statement as example 5...
+	 * }
+	 * 
+	 * // 9. Similar goal to above but with URL /path/to/page/sort/date/
+	 * // that uses separate segment for sort value, which is a good 
+	 * // example of using the “next” segment feature: 
+	 * $sort = $input->urlSegment('sort='); 
+	 * if($sort === 'title') {
+	 *   // sort by title
+	 * } else if($sort === 'date') {
+	 *   // sort by date
+	 * } else if($sort === '-date') {
+	 *   // reverse sort by date
+	 * } else {
+	 *   // no sort specified, use default
+	 * }
 	 * ~~~~~
 	 * 
 	 * #pw-group-URL-segments
 	 *
-	 * @param int $num Retrieve the n'th URL segment (default=1). 
-	 * @return string Returns URL segment value or a blank string if the specified index is not found.
+	 * @param int|string $get Specify one of the following
+	 *  - Omit argument to simply return 1st URL segment. 
+	 *  - Positive integer of n’th URL segment where first is 1.
+	 *  - Negative integer of URL segment to match from end where last is -1. (3.0.155+)
+	 *  - Full URL segment string to return index for, if present (or 0 if not). (3.0.155+)
+	 *  - Full URL segment with equals sign before or after it, to return segment before or after it. (3.0.155+)
+	 *  - Wildcard string to match, as described in method description and examples. (3.0.155+)
+	 *  - Regular expression string to match, as described in method description and examples. (3.0.155+)
+	 * @return string|int Returns one of the following: 
+	 *  - URL segment at requested index or blank string if not present. 
+	 *  - Index (integer) of matching URL segment when given entire segment to match, or 0 when there is no match. (3.0.155+)
+	 *  - Matching URL segment when given wildcard string or regular expression. (3.0.155+)
+	 *  - Portion of matching URL segment when given wildcard or regex with parenthesis around pattern to match. (3.0.155+)
 	 * @see WireInput::urlSegmentStr()
 	 *
 	 */
-	public function urlSegment($num = 1) {
-		if($num < 1) $num = 1; 
-		return isset($this->urlSegments[$num]) ? $this->urlSegments[$num] : '';
+	public function urlSegment($get = 1) {
+		
+		if(empty($get)) $get = 1;
+
+		if($get < 0) {
+			// retrieve from end
+			$get = abs($get)-1;
+			$urlSegments = array_reverse($this->urlSegments);
+			return isset($urlSegments[$get]) ? $urlSegments[$get] : '';
+		}
+
+		if(is_int($get) || ctype_digit($get) || empty($get)) {
+			// return URL segment at numbered index $get
+			$get = (int) $get;
+			if($get < 1) $get = 1;
+			return isset($this->urlSegments[$get]) ? $this->urlSegments[$get] : '';
+		}
+	
+		return $this->urlSegmentMatch($get); 
+	}
+	
+	/**
+	 * Handles find/match logic for URL segment methods
+	 * 
+	 * @param string $get URL segment match string
+	 * @param int $num Limit only to this URL segment number (default=0 to indicate ignore)
+	 * @return string|int|bool
+	 * @since 3.0.155
+	 * 
+	 */
+	protected function urlSegmentMatch($get, $num = 0) {
+		
+		if(empty($get) && $num > 0) {
+			return isset($this->urlSegments[$num]) ? $this->urlSegments[$num] : '';
+		}
+		
+		$eqPos = strpos($get, '=');
+		if($eqPos !== false) $get = trim($get, '=');
+		list($matchBefore, $matchAfter) = array($eqPos === 0, $eqPos > 0);
+	
+		// check if $get has wildcard or regex
+		$regex = $this->patternToRegex($get);
+		$match = '';
+		$index = 0;
+
+		if($regex) {
+			// find matching URL segment and return it
+			foreach($this->urlSegments as $index => $segment) {
+				if($num > 0 && $index !== $num) continue;
+				$match = $this->patternMatchesValue($regex, $segment);
+				if($match !== '') break;
+			}
+			if($match === '') $index = 0;
+			
+		} else {
+			// return index where segment is found
+			if($num > 0) {
+				// apply only to specific URL segment and return bool
+				$match = isset($this->urlSegments[$num]) && $this->urlSegments[$num] === $get;
+				$index = $match ? $num : 0;
+			} else {
+				// search all URL segments and return index
+				$match = (int) array_search($get, $this->urlSegments);
+				$index = $match;
+			}
+		}
+	
+		// adjust to use urlSegment before or after when requested
+		if($matchBefore) {
+			$match = $index > 1 ? $this->urlSegments[$index-1] : '';
+		} else if($matchAfter) {
+			$match = isset($this->urlSegments[$index+1]) ? $this->urlSegments[$index+1] : '';
+		}
+
+		return $match;
 	}
 
 	/**
@@ -418,8 +677,10 @@ class WireInput extends Wire {
 	 *
 	 */
 	public function setUrlSegment($num, $value) {
+		$config = $this->wire()->config;
+		$sanitizer = $this->wire()->sanitizer;
 		$num = (int) $num; 
-		$maxLength = $this->wire('config')->maxUrlSegmentLength;
+		$maxLength = $config->maxUrlSegmentLength;
 		if($maxLength < 1) $maxLength = 128;
 		if(is_null($value)) {
 			// unset
@@ -432,14 +693,31 @@ class WireInput extends Wire {
 			$this->urlSegments = $urlSegments;
 		} else {
 			// sanitize to standard PW name format
-			$urlSegment = $this->wire('sanitizer')->name($value, false, $maxLength);
+			$urlSegment = $sanitizer->name($value, false, $maxLength);
 			// if UTF-8 mode and value changed during name sanitization, try pageNameUTF8 instead
-			if($urlSegment !== $value && $this->wire('config')->pageNameCharset == 'UTF8') {
-				$urlSegment = $this->wire('sanitizer')->pageNameUTF8($value, $maxLength);
+			if($urlSegment !== $value && $config->pageNameCharset == 'UTF8') {
+				$urlSegment = $sanitizer->pageNameUTF8($value, $maxLength);
 			}
 			$this->urlSegments[$num] = $urlSegment;
 		}
-		
+	}
+
+	/**
+	 * Set/replace all URL segments
+	 *
+	 * #pw-group-URL-segments
+	 * #pw-internal
+	 *
+	 * @param array $urlSegments Regular/non-indexed PHP array where first element is first URL segment
+	 * @since 3.0.186
+	 *
+	 */
+	public function setUrlSegments(array $urlSegments) {
+		$n = 1;
+		foreach($urlSegments as $urlSegment) {
+			$this->setUrlSegment($n, $urlSegment);
+			$n++;
+		}
 	}
 	
 	/**
@@ -473,27 +751,39 @@ class WireInput extends Wire {
 	 * 
 	 * #pw-group-URL-segments
 	 *
-	 * @param bool $verbose Include pagination number (pageNum) and trailing slashes, when appropriate? (default=false)
+	 * @param bool|array $verbose Include pagination number (pageNum) and trailing slashes, when appropriate? (default=false)
 	 *  - Use this option for a more link-ready version of the URL segment string (since 3.0.106). 
+	 *  - Optionally substitute $options argument for this argument, default for $verbose option remains false (since 3.0.155+).
 	 * @param array $options Options to adjust behavior (since 3.0.106):
-	 *  - `segments` (array|null): Optionally specify URL segments to use, rather than those from current request. (default=null)
+	 *  - `segments` (array): Optionally specify URL segments to use, rather than those from current request. (default=[])
+	 *  - `values` (array): Same as segments option, but associative array converted to /key1/value1/key2/value2/ segment string. (default=[]) 3.0.155+
 	 *  - `pageNum` (int): Optionally specify page number to use rather than current. (default=current page number)
 	 *  - `page` (Page): Optionally specify Page to use for context. (default=current page)
+	 *  - `verbose` (bool): Verbose argument from method, applies only if $options given for $verbose argument. 
 	 *  - *NOTE* the `pageNum` and `page` options are not applicable unless the $verbose argument is true. 
 	 * @return string URL segment string, i.e. `segment1/segment2/segment3` or blank if none
 	 * @see WireInput::urlSegment()
 	 *
 	 */
 	public function urlSegmentStr($verbose = false, array $options = array()) {
-	
-		if(isset($options['segments']) && is_array($options['segments'])) {
-			$segments = $options['segments'];
-		} else {
-			$segments = $this->urlSegments;
+		
+		if(is_array($verbose)) {
+			$options = $verbose;
+			$verbose = isset($options['verbose']) ? $options['verbose'] : false;
 		}
 		
-		$str = implode('/', $segments);
-	
+		if(!empty($options['values']) && is_array($options['values'])) {
+			$str = '';
+			foreach($options['value'] as $key => $value) {
+				$str .= "$key/$value/";
+			}
+			$str = rtrim($str, '/');
+		} else if(!empty($options['segments']) && is_array($options['segments'])) {
+			$str = implode('/', $options['segments']);
+		} else {
+			$str = implode('/', $this->urlSegments);
+		}
+		
 		// regular mode exits here
 		if(!$verbose) return $str;
 	
@@ -513,7 +803,7 @@ class WireInput extends Wire {
 			if(strlen($str)) $str .= '/';
 			$str .= $this->pageNumStr($pageNum);
 			if($template->slashPageNum) $str .= '/';
-		} else if($template->slashUrlSegments && strlen($str)) {
+		} else if(strlen($str) && (int) $template->slashUrlSegments > -1) {
 			$str .= '/';
 		}
 			
@@ -606,8 +896,15 @@ class WireInput extends Wire {
 		if($key == 'scheme') return $this->scheme();
 
 		if(strpos($key, 'urlSegment') === 0) {
-			if(strlen($key) > 10) $num = (int) substr($key, 10); 
-				else $num = 1; 
+			if($key === 'urlSegmentFirst') {
+				$num = 1;
+			} else if($key === 'urlSegmentLast') {
+				$num = -1;
+			} else if(strlen($key) > 10) {
+				$num = (int) substr($key, 10);
+			} else {
+				$num = 1;
+			}
 			return $this->urlSegment($num);
 		}
 
@@ -654,24 +951,35 @@ class WireInput extends Wire {
 	 * 
 	 * #pw-group-URLs
 	 * 
-	 * @param bool $withQueryString Include the query string as well? (if present, default=false)
+	 * @param array|bool $options Specify `withQueryString` (bool) option, or in 3.0.167+ you can also use an options array: 
+	 *  - `withQueryString` (bool): Include the query string as well? (if present, default=false)
+	 *  - `page` (Page): Page object to use, if different from $page (default=$page)
+	 *  - `pageNum` (int): Override current pagination number with this one, 1 to exclude pageNum, 0 for no override (default=0). 3.0.169+
 	 * @return string
 	 * @see WireInput::httpUrl(), Page::url()
 	 * 
 	 */
-	public function url($withQueryString = false) {
+	public function url($options = array()) {
+		
+		$defaults = array(
+			'withQueryString' => is_bool($options) ? $options : false,
+			'page' => $this->wire('page'), 
+			'pageNum' => 0, 
+		);
 
-		$url = '';
+		$options = is_array($options) ? array_merge($defaults, $options) : $defaults;
+		
 		/** @var Page $page */
-		$page = $this->wire('page'); 
+		$page = $options['page'];
 		$config = $this->wire('config');
 		$sanitizer = $this->wire('sanitizer');
+		$url = '';
 		
 		if($page && $page->id) {
 			// pull URL from page
 			$url = $page->url();
 			$segmentStr = $this->urlSegmentStr();
-			$pageNum = $this->pageNum();
+			$pageNum = $options['pageNum'] > 0 ? (int) $options['pageNum'] : $this->pageNum();
 			if(strlen($segmentStr) || $pageNum > 1) {
 				if($segmentStr) $url = rtrim($url, '/') . '/' . $segmentStr;
 				if($pageNum > 1) $url = rtrim($url, '/') . '/' . $this->pageNumStr($pageNum); 
@@ -708,7 +1016,7 @@ class WireInput extends Wire {
 			}
 		}
 		
-		if($withQueryString) {
+		if($options['withQueryString']) {
 			$queryString = $this->queryString();
 			if(strlen($queryString)) {
 				$url .= "?$queryString";
@@ -736,27 +1044,33 @@ class WireInput extends Wire {
 	 * 
 	 * #pw-group-URLs
 	 * 
-	 * @param bool $withQueryString Include the query string? (default=false) 
+	 * @param array|bool $options Specify `withQueryString` (bool) option, or in 3.0.167+ you can also use an options array:
+	 *  - `withQueryString` (bool): Include the query string as well? (if present, default=false)
+	 *  - `page` (Page): Page object to use, if different from $page (default=$page)
 	 * @return string
 	 * @see WireInput::url(), Page::httpUrl()
 	 * 
 	 */
-	public function httpUrl($withQueryString = false) {
-		return $this->httpHostUrl() . $this->url($withQueryString);
+	public function httpUrl($options = array()) {
+		return $this->httpHostUrl() . $this->url($options);
 	}
 
 	/**
 	 * Same as httpUrl() method but always uses https scheme, rather than current request scheme
 	 * 
-	 * See httpUrl() method for argument and usage details. 
+	 * See httpUrl() method for argument and usage details.
 	 * 
-	 * @param bool $withQueryString
+	 * #pw-group-URLs
+	 * 
+	 * @param array|bool $options Specify `withQueryString` (bool) option, or in 3.0.167+ you can also use an options array:
+	 *  - `withQueryString` (bool): Include the query string as well? (if present, default=false)
+	 *  - `page` (Page): Page object to use, if different from $page (default=$page)
 	 * @return string
 	 * @see WireInput::httpUrl()
 	 * 
 	 */
-	public function httpsUrl($withQueryString = false) {
-		return $this->httpHostUrl(true) . $this->url($withQueryString);
+	public function httpsUrl($options = array()) {
+		return $this->httpHostUrl(true) . $this->url($options);
 	}
 
 	/**
@@ -767,15 +1081,19 @@ class WireInput extends Wire {
 	 * #pw-group-URLs
 	 * 
 	 * @param string|bool|null Optionally specify this argument to force a particular scheme (rather than using current):
-	 *  - boolean true to force “https”
-	 *  - boolean false to force “http”
-	 *  - string with scheme you want to use
+	 *  - boolean true or string "https" to force “https”
+	 *  - boolean false or string "http" to force “http”
+	 *  - string with some other scheme you want to use
 	 *  - blank string or "//" for no scheme, i.e. URL begins with "//" which refers to current scheme. 
 	 *  - omit argument or null to use current request scheme (default behavior). 
+	 * @param string $httpHost HTTP host to use or leave blank for current host
 	 * @return string
 	 * 
 	 */
-	public function httpHostUrl($scheme = null) {
+	public function httpHostUrl($scheme = null, $httpHost = '') {
+		if(empty($httpHost)) {
+			$httpHost = $this->wire('config')->httpHost;
+		}
 		if($scheme === true) {
 			$scheme = 'https://';
 		} else if($scheme === false) {
@@ -789,9 +1107,194 @@ class WireInput extends Wire {
 		} else {
 			$scheme = $this->scheme() . '://';
 		}
-		return $scheme . $this->wire('config')->httpHost;
+		return $scheme . $httpHost;
 	}
 
+	/**
+	 * Generate canonical URL for current page and request
+	 * 
+	 * Canonical URL includes full scheme, hostname, path and optionally: 
+	 * URL segments, page numbers and query string.
+	 * 
+	 * #pw-group-URLs
+	 * 
+	 * @param array $options
+	 *  - `scheme` (string|bool): Scheme "https", "http", or omit to auto-detect (default='').
+	 *  - `host` (string): Hostname or omit to use current http host (default='').
+	 *  - `page` (Page): Page to use for URL or omit for current Page (default=$page).
+	 *  - `urlSegments` (array|string|bool): True to include current URL segments, false to disable, 
+	 *     or specify array or string of URL segments to use (default=true).
+	 *  - `notSegments` (array|string): Full URL segments or patterns (wildcard or regex) to exclude 
+	 *     from canonical URL (default=[])
+	 *  - `pageNum` (bool|int): True to include current page/pagination number, false to disable, 
+	 *     or specify pagination number (int) to use (default=true).
+	 *  - `queryString` (bool|string|array): True to use current whitelist query string, false to disable,
+	 *     or specify array of query string vars, or actual query string as string (default=true).
+	 *  - `language` (bool|Language): True for current language, false to force default or no language,
+	 *     or specify Language object to use that language. (default=true) 
+	 * @return string
+	 * @since 3.0.155
+	 * 
+	 */
+	public function canonicalUrl(array $options = array()) {
+		
+		$defaults = array(
+			'page' => $this->wire('page'),
+			'scheme' => '', 
+			'host' => '',
+			'urlSegments' => true, 
+			'notSegments' => array(), 
+			'pageNum' => true, 
+			'queryString' => true, 
+			'language' => true, 
+		);
+		
+		$options = array_merge($defaults, $options);
+		$page = $options['page']; /** @var Page $page */
+		$pageUrl = $page->url();
+		$template = $page->template;
+		$requestUrl = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+		$languages = $this->wire('languages'); /** @var Languages|null $languages */
+		$language = $options['language']; /** @var Language|int|string|bool */
+		
+		if(is_string($options['notSegments'])) {
+			$options['notSegments'] = array($options['notSegments']);
+		}
+
+		if($language !== true && $languages) {
+			$language = $options['language'];
+			if($language === false) {
+				$language = $languages->getDefault();
+			} else if(!$language instanceof Language) {
+				$language = $languages->get($language);
+			}
+			if($language instanceof Language) {
+				$pageUrl = $page->localUrl($language);
+			}
+		}
+		
+		// Scheme
+		if($options['scheme'] === '') {
+			// auto-detect according to template setting and/or current request
+			if($template->https > 0) {
+				$scheme = 'https';
+			} else if($template->https < 0) {
+				$scheme = 'http';
+			} else {
+				$scheme = $this->scheme();
+			}
+		} else if($options['scheme'] === true || $options['scheme'] === 'https') {
+			// force https
+			$scheme = 'https';
+		} else if($options['scheme'] === false || $options['scheme'] === 'http') {
+			// force http
+			$scheme = 'http';
+		} else if($options['scheme'] && is_string($options['scheme'])) {
+			// some other scheme
+			$scheme = strtolower($options['scheme']);
+		} else {
+			// use current scheme
+			$scheme = $this->scheme();
+		}
+	
+		// URL Segments String
+		if(is_bool($options['urlSegments'])) {
+			$urlSegments = $options['urlSegments'] ? $this->urlSegments() : array();
+		} else if(is_array($options['urlSegments'])) {
+			$urlSegments = $options['urlSegments'];
+		} else if(is_string($options['urlSegments'])) {
+			$urlSegments = explode('/', trim($options['urlSegments'], '/')); 
+		} else {
+			$urlSegments = $this->urlSegments();
+		}
+	
+		// remove excluded segments
+		if(count($urlSegments) && !empty($options['notSegments'])) {
+			foreach($options['notSegments'] as $pattern) {
+				foreach($urlSegments as $key => $segment) {
+					if($this->patternMatchesValue($pattern, $segment)) unset($urlSegments[$key]); 
+				}
+			}
+		}
+		
+		// Page/Pagination number
+		if($options['pageNum'] === true) {
+			$pageNumStr = $this->pageNum() > 1 ? $this->pageNumStr() : '';
+		} else if(is_int($options['pageNum']) && $options['pageNum'] > 1) {
+			$pageNumStr = $this->pageNumStr($options['pageNum']);
+		} else {
+			$pageNumStr = '';
+		}
+		
+		// Query string
+		if($options['queryString'] === true) {
+			// use query string vars from $input->whitelist()
+			$queryString = $this->whitelist()->queryString();
+		} else if(is_array($options['queryString'])) {
+			// use given array to create query string
+			$queryString = http_build_query($options['queryString']);
+		} else if(is_string($options['queryString'])) {
+			// use given string as query string
+			$queryString = $options['queryString'];
+		} else {
+			$queryString = '';
+		}
+
+		// Start building final URL
+		$url = $pageUrl;
+
+		// add in URL segments if applicable
+		if(count($urlSegments)) {
+			$urlSegmentStr = implode('/', $urlSegments);
+			$slashUrlSegments = (int) $template->slashUrlSegments;
+			$url = rtrim($url, '/') . '/' . $urlSegmentStr; 
+			if($slashUrlSegments > 0 || $pageNumStr) {
+				// add trailing slash to URL segments
+				$url .= '/';
+			} else if($slashUrlSegments === 0) {
+				// use current request as model for whether slash should be used
+				$testUrl = rtrim($pageUrl, '/') . "/$urlSegmentStr/";
+				if(strpos($requestUrl, $testUrl) !== false) $url .= '/';	
+			} else if($slashUrlSegments < 0) {
+				// no trailing slash
+			}
+		}
+	
+		// add in page/pagination number if applicable
+		if($pageNumStr) {
+			$url = rtrim($url, '/') . '/' . $pageNumStr; 
+			$slashPageNum = (int) $template->slashPageNum;
+			if($slashPageNum > 0) {
+				// add trailing slash to page number
+				$url .= '/';
+			} else if($slashPageNum === 0) {
+				// use current request as model for whether slash should be used
+				$testUrl = rtrim($url, '/') . "/$pageNumStr/";
+				if(strpos($requestUrl, $testUrl) !== false) $url .= '/';	
+			} else if($slashPageNum < 0) {
+				// no trailing slash
+			}
+		}
+		
+		if($url === '/') {
+			// homepage-only URL and trailing slash specifically disabled. Note that Google
+			// considers slash implied in domain-only URL, so this apparently doesn’t matter.
+			if(((int) $template->slashUrls) < 1) $url = '';
+		}
+	
+		// add in query string if applicable
+		if(strlen($queryString)) {
+			$url .= '?' . ltrim($queryString, '?'); 
+		}
+	
+		// bundle in scheme and host and return canonical URL
+		$url = $this->httpHostUrl($scheme, $options['host']) . $url;
+		
+		if($page->of()) $url = $this->wire('sanitizer')->entities($url);
+		
+		return $url;
+	}
+	
 	/**
 	 * Anchor/fragment for current request (i.e. #fragment)
 	 * 
@@ -801,6 +1304,7 @@ class WireInput extends Wire {
 	 * #pw-internal
 	 *
 	 * @return string
+	 * @deprecated
 	 *
 	 */
 	public function fragment() {
@@ -820,10 +1324,182 @@ class WireInput extends Wire {
 	 * 
 	 * @param array $overrides Optional assoc array for overriding or adding GET params
 	 * @return string Returns the unsanitized query string
+	 * @see WireInput::queryStringClean()
 	 * 
 	 */
 	public function queryString($overrides = array()) {
 		return $this->get()->queryString($overrides);
+	}
+
+	/**
+	 * Return a cleaned query string that was part of this request, or blank if none
+	 * 
+	 * Note: it is recommended that you always specify $options with this method as the defaults 
+	 * may or may not be consistent with your needs. 
+	 * 
+	 * #pw-group-URLs
+	 * 
+	 * @param array $options
+	 *  - `values` (array): Optional associative array of [name=value] to use in query string rather than current GET vars. (default=[])
+	 *  - `overrides` (array): Array of values to override or add to current request values. (default=[])
+	 *  - `validNames` (array): Only include query string variables with these names, and omit any others. (default=[])
+	 *  - `maxItems` (int): Maximum number of variables/items to include in the query string or 0 for no max. (default=20)
+	 *  - `maxLength` (int): Max overall length of returned query string or 0 for no max. (default=1024)
+	 *  - `maxNameLength` (int): Max length of any “name” in the “name=value” portion of a query string or 0 for no max. (default=50)
+	 *  - `maxValueLength` (int): Max length of any “value” in the “name=value” portion of a query string or 0 for no max. (default=255)
+	 *  - `maxArrayDepth` (int): Maximum depth for arrays, or 0 to disallow arrays. (default=0)
+	 *  - `maxArrayItems` (int): Maximum number of items allowed in arrays or 0 for no max. (default=20)
+	 *  - `associative` (bool): Allow associative arrays? (default=false)
+	 *  - `sanitizeName` (string): Sanitize query string variable names with this sanitizer method or blank to ignore. (default='fieldName')
+	 *  - `sanitizeValue` (string): Sanitize query string variable values with this sanitizer method or blank to ignore. (default='line')
+	 *  - `sanitizeRemove` (bool): Remove any variables from query string that are changed as the result of sanitization? (default=true)
+	 *  - `entityEncode` (bool): Should returned query string be entity encoded for HTML output? (default=true)
+	 *  - `encType` (int): Use PHP_QUERY_RFC3986 for spaces encoded to '%20' or PHP_QUERY_RFC1738 for spaces as '+'. (default=PHP_QUERY_RFC3986)
+	 *  - `separator` (string): Character(s) that separate each “name=value” in query string. (default='&')
+	 * @return string
+	 * @since 3.0.167
+	 * 
+	 */
+	public function queryStringClean(array $options = array()) {
+		
+		$defaults = array(
+			'values' => array(),
+			'overrides' => array(),
+			'validNames' => array(), 
+			'maxItems' => 20, 
+			'maxLength' => 1024, // max overall length
+			'maxNameLength' => 50,
+			'maxValueLength' => 255,
+			'allowArrays' => false, 
+			'maxArrayDepth' => 0, 
+			'maxArrayItems' => 20,
+			'sanitizeName' => 'fieldName',
+			'sanitizeValue' => 'line',
+			'sanitizeRemove' => true, 
+			'entityEncode' => true, 
+			'encType' => PHP_QUERY_RFC3986, // Spaces are '%20', for '+' use PHP_QUERY_RFC1738
+			'separator' => '&',
+		);
+		
+		$options = array_merge($defaults, $options);
+		$values = empty($options['values']) ? $this->get()->getArray() : $options['values'];
+		$sanitizer = $this->wire()->sanitizer;
+		$separator = $options['separator'];
+		$maxArrayDepth = $options['maxArrayDepth'];
+		
+		if(count($options['overrides'])) {
+			$values = array_merge($values, $options['overrides']); 
+		}
+	
+		// only allow specific names/keys from the array
+		if(!empty($options['validNames'])) {
+			$a = array();
+			foreach($values as $name => $value) {
+				if(in_array($name, $options['validNames'], true)) $a[$name] = $value;
+			}
+			$values = $a;
+		}
+	
+		// limit to a max quantity of items
+		if($options['maxItems'] && count($values) > $options['maxItems']) {
+			$values = array_slice($values, 0, $options['maxItems']);
+		}
+	
+		// sanitize or remove arrays
+		foreach($values as $name => $value) {
+			if(!is_array($value)) continue;
+			if($options['allowArrays']) {
+				$a = $sanitizer->arrayVal($value, array(
+					'maxItems' => $options['maxArrayItems'],
+					'maxDepth' => $maxArrayDepth, 
+					'sanitizer' => $options['sanitizeValue'], 
+					'keySanitizer' => $options['sanitizeName'],
+				));
+				if($options['sanitizeRemove'] && $a != $value) {
+					unset($values[$name]);
+				} else {
+					$values[$name] = $a;
+				}
+			} else {
+				unset($values[$name]); 
+			}
+		}
+
+		// sanitize names
+		if($options['sanitizeName'] || $options['maxNameLength']) {
+			$method = $options['sanitizeName'];
+			$max = $options['maxNameLength'];
+			$a = array();
+			foreach($values as $name => $value) {
+				$newName = $method ? $sanitizer->$method($name) : $name;
+				if($max && strlen($newName) > $max) {
+					$newName = substr($newName, 0, $max);
+				}
+				if($newName === $name) {
+					$a[$name] = $value;
+				} else if(!$options['sanitizeRemove']) {
+					$a[$newName] = $value;
+				}
+			}
+			$values = $a;
+		}
+	
+		// sanitize values
+		if($options['sanitizeValue'] || $options['maxValueLength']) {
+			$method = $options['sanitizeValue'];
+			$max = $options['maxValueLength'];
+			$a = array();
+			foreach($values as $name => $value) {
+				if(is_array($value) && $options['allowArrays']) {
+					// arrays already handled earlier
+					$a[$name] = $value;
+					continue;
+				} 
+				$newValue = $method ? $sanitizer->$method($value) : $value;
+				if($max && strlen($newValue) > $max) {
+					$newValue = substr($newValue, 0, $max);
+				}
+				if($newValue === $value) {
+					$a[$name] = $value;
+				} else if(!$options['sanitizeRemove']) {
+					$a[$name] = $newValue;
+				}
+			}
+			$values = $a;
+		}
+		
+		if(!count($values)) return '';
+	
+		// prevent double encoding if an encoded & was provided in $options
+		if(strtolower($separator) === '&amp;' && $options['entityEncode']) {
+			$separator = '&';
+		}
+
+		// build the query string
+		$queryString = http_build_query($values, '', $separator, $options['encType']);
+		
+		// %5Bfoobar%5D => [foobar]
+		// if(strpos($queryString, '%5D=')) {
+		//	$queryString = preg_replace('/%5B([-_.a-zA-Z0-9]+)%5D=/', '[$1]=', $queryString);
+		// }
+	
+		// entity encode if requested
+		if($options['entityEncode']) {
+			$queryString = $sanitizer->entities($queryString);
+			$separator = $sanitizer->entities($separator);
+		}
+	
+		// if query string exceeds max allowed length then truncate it
+		if($options['maxLength'] && strlen($queryString) > $options['maxLength']) { 
+			while(strlen($queryString) > $options['maxLength'] && strpos($queryString, $separator)) {
+				$a = explode($separator, $queryString);
+				array_pop($a);
+				$queryString = implode($separator, $a);
+			}
+			if(strlen($queryString) > $options['maxLength']) $queryString = '';
+		}
+		
+		return $queryString;
 	}
 
 	/**
@@ -929,7 +1605,6 @@ class WireInput extends Wire {
 		} else if(is_string($valid)) {
 			// sanitizer "name" or multiple "name1,name2,name3" specified for $valid argument
 			$cleanValue = $this->sanitizeValue($valid, $value, ($forceArray || is_array($fallback)));
-			if(empty($value) && $fallback !== null) $cleanValue = $fallback;
 
 		} else if(is_array($valid)) {
 			// whitelist provided for $valid argument
@@ -1012,30 +1687,64 @@ class WireInput extends Wire {
 	 */
 	protected function sanitizeValue($method, $value, $getArray) {
 		
-		/** @var Sanitizer $sanitizer */
-		$sanitizer = $this->wire('sanitizer');
-		//$values = is_array($value) ? $value : ($value === null ? array() : array($value));
-		$values = is_array($value) ? $value : array($value);
-		$methods = strpos($method, ',') === false ? array($method) : explode(',', $method);
-		$cleanValues = array();
+		$sanitizer = $this->wire()->sanitizer;
+		$sanitizers = $sanitizer->getAll(true);
+		$methods = array();
 		
-		foreach($values as $value) {
-			foreach($methods as $method) {
-				$method = trim($method);
-				if(empty($method)) continue;
-				if($sanitizer->methodExists($method)) {
-					$value = $sanitizer->sanitize($value, $method); 
-				} else {
-					throw new WireException("Unknown sanitizer method: $method");
-				}
+		foreach(explode(',', $method) as $name) {
+			$name = trim($name);
+			if(empty($name)) continue;
+			if(!isset($sanitizers[$name])) throw new WireException("Unknown sanitizer '$method'"); 
+			$methods[$name] = $sanitizers[$name]; // value is return type(s)
+		}
+	
+		$lastReturnType = end($methods); 
+		if(!$getArray) {
+			if($lastReturnType === 'a') {
+				$getArray = true; // array return value implied
+			} else if(strpos($lastReturnType, 'a') !== false) {
+				$getArray = 1; // array return value possible
 			}
-			$cleanValues[] = $value;
 		}
 		
-		$cleanValue = $getArray ? $cleanValues : reset($cleanValues);
-		if($cleanValue === false) $cleanValue = null;
+		foreach($methods as $methodName => $returnType) {
+			
+			$methodName = trim($methodName);
+			if(empty($methodName)) continue;
+			
+			if(is_array($value)) {
+				// array value
+				if(!count($value)) {
+					// nothing to do with value
+					$value = array();
+				} else if($getArray && strpos($returnType, 'a') === false) {
+					// sanitize array with sanitizer that does not do arrays, 1 item at a time
+					$a = array();
+					foreach($value as $v) {
+						$cv = $sanitizer->sanitize($v, $methodName);
+						if($cv !== null) $a[] = $cv;
+					}
+					$value = $a;
+				} else if($getArray) {
+					// sanitizer that can handle arrays
+					$value = $sanitizer->sanitize($value, $methodName);
+				} else {
+					// sanitizer does not do arrays, reduce to 1st array item
+					$value = reset($value);
+					$value = $sanitizer->sanitize($value, $methodName);
+				}
+				
+			} else {
+				// non-array value
+				$value = $sanitizer->sanitize($value, $methodName);
+			}
+		}
 		
-		return $cleanValue; 
+		if($getArray === true && !is_array($value)) {
+			$value = array($value);
+		}
+		
+		return $value; 
 	}
 
 
@@ -1090,5 +1799,106 @@ class WireInput extends Wire {
 		$info['pageNum'] = $this->pageNum;
 		return $info;
 	}
+
+	/**
+	 * Call unknown method
+	 * 
+	 * #pw-internal 
+	 * 
+	 * @param string $method
+	 * @param array $arguments
+	 * @return mixed|null
+	 * @throws WireException
+	 * 
+	 */
+	public function ___callUnknown($method, $arguments) {
+		if(strpos($method, 'urlSegment') === 0) {
+			// Allow for method calls: urlSegment1(), urlSegment2('sort-*'), urlSegmentLast(), etc. 
+			list(,$num) = explode('urlSegment', $method, 2);
+			if(ctype_digit($num)) $num = (int) $num;
+			if($num === 'Last') $num = -1;
+			if($num === 'First') $num = 1; 
+			if(is_int($num)) {
+				if(empty($arguments)) {
+					return $this->urlSegment((int) $num); 
+				} else {
+					return $this->urlSegmentMatch($arguments[0], (int) $num);
+				}
+			} 
+		}
+		return parent::___callUnknown($method, $arguments);
+	}
+
+	/**
+	 * Does given wildcard, pattern or string match given value? (or any of given values if array)
+	 * 
+	 * #pw-internal
+	 *
+	 * @param string $pattern
+	 * @param string|array $value
+	 * @param bool $partial Perform a partial match if not a wildcard or regex? (default=false)
+	 * @return string Returns match on success or blank string if no match
+	 * @since 3.0.155
+	 *
+	 */
+	protected function patternMatchesValue($pattern, $value, $partial = false) {
+		if(is_array($value)) {
+			$result = '';
+			foreach($value as $k => $v) {
+				$result = $this->patternMatchesValue($pattern, $v, $partial); 
+				if($result !== '') break;
+			}
+			return $result;
+		}
+		$regex = in_array($pattern[0], $this->regexDelims) ? $pattern : $this->patternToRegex($pattern);
+		if($regex) {
+			if(preg_match($regex, $value, $matches)) {
+				$result = isset($matches[1]) ? $matches[1] : $value;
+			} else {
+				$result = '';
+			}
+		} else if($partial) {
+			$result = strpos($value, $pattern) !== false ? $value : '';
+		} else {
+			$result = $pattern === $value ? $value : '';
+		}
+		return $result;
+	}
+
+	/**
+	 * Convert wildcard pattern to regex (if not already a regex) or blank string if not a pattern
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $pattern
+	 * @return string
+	 * @since 3.0.155
+	 *
+	 */
+	protected function patternToRegex($pattern) {
+		if(!strlen($pattern)) {
+			// nothing to do
+			$regex = '';
+		} else if(in_array($pattern[0], $this->regexDelims) && strrpos($pattern, $pattern[0])) {
+			// already a regular expression
+			$regex = $pattern;
+		} else if(strpos($pattern, '*') !== false) {
+			// wildcard, convert to regex
+			$a = explode('*', $pattern);
+			foreach($a as $k => $v) {
+				$a[$k] = preg_quote($v);
+			}
+			$regex = '/^' . implode('.+', $a) . '$/';
+			$regex = str_replace(
+				array('\\(', '\\)', '\\[', '\\]'), 
+				array('(', ')', '[', ']'), 
+				$regex
+			);
+		} else {
+			$regex = '';
+		}
+		return $regex;
+	}
+
 }
 

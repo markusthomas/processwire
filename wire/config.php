@@ -12,7 +12,7 @@
  * You may also make up your own configuration options by assigning them 
  * in /site/config.php 
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  *
  * 
@@ -76,12 +76,15 @@ $config->debugIf = '';
 /**
  * Tools, and their order, to show in debug mode (admin)
  * 
- * Options include: pages, api, session, modules, hooks, database, db, timers, user, input, cache, autoload
+ * Options include: pages, api, session, modules, hooks, database, db, timers, user, input, cache, autoload, lazyload
+ * 
+ * Note: when used, lazyload option should be placed first beause its results can be affected by later debug tools.
  * 
  * @var array
  * 
  */
 $config->debugTools = array(
+	//'lazyload',
 	'pages',
 	'api',
 	'session',
@@ -100,8 +103,41 @@ $config->debugTools = array(
  * Enable ProcessWire advanced development mode?
  * 
  * Turns on additional options in ProcessWire Admin that aren't applicable in all instances.
- * Be careful with this as some options configured in advanced mode cannot be removed once
- * set (at least not without going directly into the database). 
+ * Be careful with this as some options configured in advanced mode (like system statuses) 
+ * cannot be removed once set (at least not without going directly into the database). Below 
+ * is a summary of what enabling advanced mode adds/changes:
+ * 
+ * Fields (Setup > Fields):
+ * 
+ * - Enables "system" and "permanent" flags as checkboxes on the Advanced tab when editing a field. 
+ * - Makes the admin Setup > Fields dropdown show all fields, including system fields.
+ * - Enables creation of new fields using types only allowed in advanced mode. 
+ * - Enables cloning of system fields. 
+ * - Enables showing of System templates when selecting templates to add field to (Actions tab). 
+ * 
+ * Templates (Setup > Templates): 
+ * 
+ * - Makes the admin Setup > Templates dropdown show all templates, including system templates.
+ * - On the Basics tab, enables you to select a Fieldgroup independent of the Template. 
+ * - Enables you to add "Permanent" flagged fields to a template. 
+ * - When editing a template, makes it show a "System" tab with ability to assign system flag, 
+ *   predefined page class name, cancel of global status, setting to make the "name" field appear 
+ *   in the Content tab of the page editor, option to make page deletions bypass the trash, and 
+ *   option to disable the Settings tab in the page editor.
+ * - Enables you to copy fields from another Fieldgroup maintained by a system template. 
+ * - Makes the "Advanced" tab show API examples with the Inputfield notes.
+ * 
+ * Page Editor:
+ *
+ * - Enables showing of "Object type" Page class name on Settings tab Info fields.
+ * - Enables you to select System or SystemID status for a Page on the Settings tab Status field.
+ * - Enables some template changes for superuser that go beyond configured Family settings.
+ * 
+ * Other:
+ *
+ * - In Modules, enables disable of autoload state for existing autoload module, for debug purposes.
+ * - In Lister, paired with debug mode, shows a fully parsed selector under the Lister table.
+ * - Shows an "Advanced mode" label in the footer of the admin theme. 
  * 
  * #notes Recommended mode is false, except occasionally during ProcessWire core or module development.
  * @var bool
@@ -141,6 +177,42 @@ $config->useFunctionsAPI = false;
  *
  */
 $config->useMarkupRegions = false;
+
+/**
+ * Use custom page classes? Specify boolean true to enable. 
+ *
+ * When enabled, if a class with name "[TemplateName]Page" (in ProcessWire namespace) exists
+ * in /site/classes/[TemplateName]Page.php, and it extends ProcessWire’s Page class, then the 
+ * Page will be created with that class rather than the default Page class. For instance, 
+ * template “home” would look for a class named “HomePage” and template "blog-post" (or 
+ * "blog_post") would look for a class named “BlogPostPage” (file: BlogPostPage.php). 
+ * 
+ * If you create a file named /site/classes/DefaultPage.php with a DefaultPage class within
+ * it (that extends Page), then it will be used for all pages that would otherwise use the 
+ * `Page` class. 
+ * 
+ * @var bool|string
+ * @since 3.0.152
+ *
+ */
+$config->usePageClasses = false;
+
+/**
+ * Use lazy loading of fields (plus templates and fieldgroups) for faster boot times?
+ * 
+ * This delays loading of fields, templates and fieldgroups until they are requested.
+ * This can improve performance on systems with hundreds of fields or templates, as 
+ * individual fields, templates/fieldgroups won't get constructed until they are needed.
+ * 
+ * Specify `true` to use lazy loading for all types, `false` to disable all lazy loading, 
+ * or specify array with one or more of the following for lazy loading only certain types:
+ * `[ 'fields', 'templates', 'fieldgroups' ]`
+ * 
+ * @var bool|array
+ * @since 3.0.194
+ * 
+ */
+$config->useLazyLoading = true;
 
 /**
  * Disable all HTTPS requirements?
@@ -242,13 +314,13 @@ $config->sessionExpireSeconds = 86400;
  * automatically enabled. 
  *
  * ~~~~~
- * $config->sessionAllow = function($session) {
+ * $config->sessionAllow = function($session) use($config) {
  * 
  *   // if there is a session cookie, a session is likely already in use so keep it going
  *   if($session->hasCookie()) return true;
  * 
  *   // if URL is an admin URL, allow session (replace /processwire/ with your admin URL)
- *   if(strpos($_SERVER['REQUEST_URI'], '/processwire/) === 0) return true;
+ *   if(strpos($config->requestPath(), '/processwire/') === 0) return true;
  * 
  *   // otherwise disallow session
  *   return false;
@@ -274,27 +346,43 @@ $config->sessionChallenge = true;
 /**
  * Use session fingerprint?
  * 
- * Should login sessions be tied to IP and user agent?
- * IP fingerprinting may be problematic on dynamic IPs. 
- * Below are the possible values: 
+ * Should login sessions also be tied to a fingerprint of the browser?
+ * Fingerprinting can be based upon browser-specific headers and/or
+ * IP addresses. But note that IP fingerprinting will be problematic on 
+ * dynamic IPs.
  * 
- * 	0 or false: Fingerprint off
- * 	1 or true: Fingerprint on with default/recommended setting (currently 10). 
- * 	2: Fingerprint only the remote IP
- * 	4: Fingerprint only the forwarded/client IP (can be spoofed)
- * 	8: Fingerprint only the useragent
- * 	10: Fingerprint the remote IP and useragent (default)
- * 	12: Fingerprint the forwarded/client IP and useragent
- * 	14: Fingerprint the remote IP, forwarded/client IP and useragent (all). 
+ * Predefined settings:
  * 
- * If using fingerprint in an environment where the user’s 
- * IP address may change during the session, you should
- * fingerprint only the useragent, or disable fingerprinting.
+ * - 0 or false: Fingerprint off
+ * - 1 or true: Fingerprint on with default setting (remote IP & useragent)
+ * 
+ * Custom settings:
+ * 
+ * - 2: Remote IP
+ * - 4: Forwarded/client IP (can be spoofed)
+ * - 8: Useragent
+ * - 16: Accept header
+ * 
+ * To use the custom settings above, select one or more of those you want 
+ * to fingerprint, note the numbers, and use them like in the examples:
+ * ~~~~~~ 
+ * // to fingerprint just remote IP
+ * $config->sessionFingerprint = 2; 
+ * 
+ * // to fingerprint remote IP and useragent: 
+ * $config->sessionFingerprint = 2 | 8;
+ * 
+ * // to fingerprint remote IP, useragent and accept header:
+ * $config->sessionFingerprint = 2 | 8 | 16; 
+ * ~~~~~~
+ * 
+ * If using fingerprint in an environment where the user’s IP address may 
+ * change during the session, you should fingerprint only the useragent 
+ * and/or accept header, or disable fingerprinting.
  *
- * If using fingerprint with an AWS load balancer, you should 
- * use one of the options that uses the “client IP” rather than 
- * the “remote IP”, fingerprint only the useragent, or disable 
- * fingerprinting.
+ * If using fingerprint with an AWS load balancer, you should use one of 
+ * the options that uses the “client IP” rather than the “remote IP”, 
+ * fingerprint only useragent and/or accept header, or disable fingerprinting.
  * 
  * @var int
  *
@@ -351,6 +439,25 @@ $config->sessionCookieSecure = 1;
  *
  */
 $config->sessionCookieDomain = null;
+
+/**
+ * Cookie “SameSite” value for sessions - “Lax” (default) or “Strict”
+ *
+ * - `Lax`: The session cookie will be sent along with the GET requests initiated by third party website.
+ *    This ensures an existing session on this site is maintained when clicking to it from another site.
+ * 
+ * - `Strict`: The session cookie will not be sent along with requests initiated by third party websites.
+ *    If user already has a login session on this site, it won’t be recognized when clicking from another
+ *    site to this one. 
+ * 
+ * The default/recommended value is `Lax`.
+ * 
+ * @var string
+ * @since 3.0.178
+ * @see https://www.php.net/manual/en/session.configuration.php#ini.session.cookie-samesite
+ *
+ */
+$config->sessionCookieSameSite = 'Lax';
 
 /**
  * Number of session history entries to record.
@@ -596,20 +703,60 @@ $config->contentTypes = array(
  */
 $config->fileContentTypes = array(
 	'?' => '+application/octet-stream',
+	'txt' => '+text/plain',
+	'csv' => '+text/csv',
 	'pdf' => '+application/pdf',
 	'doc' => '+application/msword',
-	'docx' => '+application/msword',
-	'xls' => '+application/excel',
-	'xlsx' => '+application/excel',
+	'docx' => '+application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'xls' => '+application/vnd.ms-excel',
+	'xlsx' => '+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	'ppt' => '+application/vnd.ms-powerpoint',
+	'pptx' => '+application/vnd.openxmlformats-officedocument.presentationml.presentation',
 	'rtf' => '+application/rtf',
 	'gif' => 'image/gif',
 	'jpg' => 'image/jpeg',
 	'jpeg' => 'image/jpeg',
-	'png' => 'image/x-png',
+	'png' => 'image/png',
 	'svg' => 'image/svg+xml',
-	'webp' => 'image/webp'
+	'webp' => 'image/webp',
+	'zip' => '+application/zip',
+	'mp3' => 'audio/mpeg',
 	);
 
+/**
+ * Named predefined image sizes and options
+ *
+ * Specify associative arrays of predefined image sizes indexed by name.
+ * Each item should have at least 'width' and 'height' indexes. But they can also have any
+ * other option accepted by the `Pageimage::size()` method `$options` argument.
+ *
+ * You can use your defined sizes by name in a Pageimage::size() call by specifying the
+ * size name rather than the `$width` argument, like this:
+ * ~~~~~~
+ * $image = $page->images->first();
+ * $landscape = $image->size('landscape');
+ * echo "<img src='$landscape->url' alt='$landscape->description' />";
+ * ~~~~~~
+ * Feel free to completely overwrite the default $config->imageSizes in your /site/config.php
+ * file * as this particular setting is not used by the core.
+ *
+ * @var array
+ * @since 3.0.151
+ *
+ */
+$config->imageSizes = array(
+	// Example 1: Landscape (try this one if you want to test the feature)
+	'landscape' => array('width' => 600, 'height' => 300),
+	
+	// Example 2: Thumbnails in admin (260 height, proportional width) 
+	// 'admin' => array('width' => 0, 'height' => 260),
+	
+	// Example 3: Portrait, with additional options: 
+	// 'portrait' => array('width' => 300, 'height' => 500, 'quality' => 80, 'suffix' => 'portrait'),
+	
+	// Example 4: Square size cropping towards (preserving) top/center (north): 
+	// 'squareNorth' => array('width' => 400, 'height' => 400, 'cropping' => 'north'),
+);
 
 /**
  * Image sizer options
@@ -715,7 +862,7 @@ $config->fileCompilerOptions = array(
 	'chmodDir' => '',  // mode to use for created directories, i.e. "0755"
 	'exclusions' => array(), // exclude filenames or paths that start with any of these
 	'extensions' => array('php', 'module', 'inc'), // file extensions we compile
-	'cachePath' => $config->paths->cache . 'FileCompiler/', // path where compiled files are stored
+	'cachePath' => '', // path where compiled files are stored, or blank for $config->paths->cache . 'FileCompiler/'
 	);
 
 /**
@@ -778,6 +925,8 @@ $config->protectCSRF = true;
  * checked in the API via $input->urlSegment1, $input->urlSegment2, $input->urlSegment3, etc.
  * To use this, your template settings (under the URL tab) must take advantage of it. Only change this
  * number if you need more (or fewer) URL segments for some reason.
+ * 
+ * Do not change this number below 3, as the admin requires up to 3 URL segments.
  * 
  * @var int
  *
@@ -844,7 +993,6 @@ $config->pageNameCharset = 'ascii';
 /**
  * If 'pageNameCharset' is 'UTF8' then specify the whitelist of allowed characters here
  * 
- * To allow any characters, you can make this blank, however using a whitelist is strongly recommended.
  * Please note this whitelist is only used if pageNameCharset is 'UTF8'. 
  * 
  * @var string
@@ -904,6 +1052,26 @@ $config->wireInputOrder = 'get post';
 $config->wireInputLazy = false;
 
 /**
+ * Maximum depth for input variables accessed from $input
+ * 
+ * A value of 1 (or less) means only single dimensional arrays are allowed. For instance, `$a['foo']`
+ * would be allowed (since it is one dimension), but `$a['foo']['bar']` would not because it is 
+ * multi-dimensional to a depth of 2.
+ * 
+ * A value of 2 or higher enables multi-dimensional arrays to that depth. For instance, a value of 2 
+ * would allow `$a['foo']['bar']` and a value of 3 or higher would enable `$a['foo']['bar']['baz']`.
+ * 
+ * Note: if your use case requires multi-dimensional input arrays and you do not have control over
+ * this setting (like if you are a 3rd party module author), or are using a version of PW prior to 
+ * 3.0.178 you can always still access multi-dimensional arrays directly from `$_GET` or `$_POST`. 
+ *
+ * @var int
+ * @since 3.0.178
+ * 
+ */
+$config->wireInputArrayDepth = 1;
+
+/**
  * Options for setting cookies from $input->cookie()->set(...)
  * 
  * Additional details about some of these options can also be found on PHP’s [setcookie](https://www.php.net/manual/en/function.setcookie.php) doc page.
@@ -911,6 +1079,7 @@ $config->wireInputLazy = false;
  * #property int age Max age of cookies in seconds or 0 to expire with session (3600=1hr, 86400=1day, 604800=1week, 2592000=30days, etc.)
  * #property string|null Cookie path or null for PW installation’s root URL (default=null).
  * #property string|null|bool domain Cookie domain: null for current hostname, true for all subdomains of current domain, domain.com for domain and all subdomains, www.domain.com for www subdomain.
+ * #property string samesite When set to “Lax” cookies are preserved on GET requests to this site originated from external links. May also be 'Strict' or 'None' ('secure' option required for 'None'). 3.0.178+
  * #property bool|null secure Transmit cookies only over secure HTTPS connection? (true, false, or null to auto-detect, using true option for cookies set when HTTPS is active).
  * #property bool httponly When true, cookie is http/server-side and not visible to JS code in most browsers.
  * 
@@ -923,6 +1092,7 @@ $config->cookieOptions = array(
 	'path' => null, // Cookie path/URL or null for PW installation’s root URL (default=null).
 	'domain' => null, // Cookie domain: null for current hostname, true for all subdomains of current domain, domain.com for domain and all subdomains, www.domain.com for www subdomain.
 	'secure' => null, // Transmit cookies only over secure HTTPS connection? (true, false, or null to auto-detect, substituting true for cookies set when HTTPS is active).
+	'samesite' => 'Lax', // When set to “Lax” cookies are preserved on GET requests to this site originated from external links. May also be 'Strict' or 'None' ('secure' option required for 'None'). 
 	'httponly' => false, // When true, cookie is http/server-side only and not visible to client-side JS code.
 	'fallback' => true, // If set cookie fails (perhaps due to output already sent), attempt to set at beginning of next request? (default=true)
 );
@@ -1080,7 +1250,67 @@ $config->dbQueryLogMax = 500;
  */
 $config->dbStripMB4 = false;
 
-
+/**
+ * Optional settings for read-only “reader” database connection 
+ * 
+ * All `$config->db*` settings above are for a read/write database connection. You can 
+ * optionally maintain a separate read-only database connection to reduce costs and 
+ * allow for further database scalability. Use of this feature requires an environment 
+ * that supports a separate read-only database connection to the same database used by the
+ * read/write connection. When enabled, ProcessWire will direct all non-writing queries to 
+ * the read-only connection, while queries that write to the database are directed to the
+ * read/write connection. 
+ * 
+ * Specify one or more existing `$config->db*` settings in the array to use that value for
+ * the read-only connection. To enable a separate read-only database connection, this array
+ * must contain at minimum a `host` or `socket` entry. Beyond that, values not present in 
+ * this array will be pulled from the existing `$config->db*` settings. Note, when specifying
+ * settings in this array, omit the `db` prefix and use lowercase for the first letter. For
+ * example, use `host` rather than `dbHost`, `name` rather than `dbName`, etc.
+ * 
+ * When using this feature, you may want to exclude your admin from it, as the admin is an
+ * environment that's designed for both read and write, so there's less reason to maintain
+ * separate read-only and read/write connections in the admin. See the examples below.
+ * 
+ * For more details see: https://processwire.com/blog/posts/pw-3.0.175/
+ * 
+ * ~~~~~
+ * // allow read-only database connection always…
+ * $config->dbReader = [ 
+ *   'host' => 'readonly.mydb.domain.com' 
+ * ];
+ * 
+ * // …or, use read-only connection only if not in the admin…
+ * if(!$config->requestPath('/processwire/')) {
+ *   $config->dbReader = [ 'host' => 'readonly.mydb.domain.com' ];
+ * }
+ *
+ * // …or limit read-only to GET requests, exclude admin and contact page… 
+ * $skipPaths = [ '/processwire/', '/contact/' ];
+ * if($config->requestMethod('GET') && !$config->requestPath($skipPaths)) {
+ *   $config->dbReader = [ 'host' => 'readonly.mydb.domain.com' ];
+ * }
+ * 
+ * // to have PW randomly select from multiple DB readers, nest the arrays (3.0.176+)
+ * // if a connection fails, PW will try another randomly till it finds one that works
+ * $config->dbReader = [
+ *   [ 'host' => 'mydb1.domain.com' ],
+ *   [ 'host' => 'mydb2.domain.com' ],
+ *   [ 'host' => 'mydb3.domain.com' ],
+ * ];
+ * ~~~~~
+ * 
+ * @var array
+ * @since 3.0.175
+ * @see https://processwire.com/blog/posts/pw-3.0.175/
+ *
+ */
+$config->dbReader = array(
+	// 'host' => 'readonly.mydb.domain.com',
+	// 'port' => 3306, 
+	// 'name' => 'mydb',
+	// …etc., though most likely you will only need 'host' entry to setup a reader
+);
 
 /*** 8. MODULES *********************************************************************************/
 
@@ -1104,7 +1334,7 @@ $config->moduleCompile = true;
  * @var string
  *
  */
-$config->moduleServiceURL = 'http://modules.processwire.com/export-json/';
+$config->moduleServiceURL = 'https://modules.processwire.com/export-json/';
 
 /**
  * Modules service API key
@@ -1114,7 +1344,30 @@ $config->moduleServiceURL = 'http://modules.processwire.com/export-json/';
  * @var string
  *
  */
-$config->moduleServiceKey = (__NAMESPACE__ ? 'pw300' : 'pw280');
+$config->moduleServiceKey = 'pw301';
+
+/**
+ * Allowed module installation options (in admin)
+ * 
+ * Module installation options you want to be available from the admin Modules > Install tab. 
+ * For any of the options below, specify boolean `true` to allow, `false` to disallow, or 
+ * specify string `'debug'` to allow only when ProcessWire is in debug mode. 
+ * 
+ * - `directory`: Allow installation or upgrades from ProcessWire modules directory?
+ * - `upload`: Allow installation by file upload?
+ * - `download`: Allow installation by file download from URL?
+ * 
+ * @todo consider whether the 'directory' option should also be limited to 'debug' only.
+ * 
+ * @var array
+ * @since 3.0.163
+ * 
+ */
+$config->moduleInstall = array(
+	'directory' => true, // allow install from ProcessWire modules directory? 
+	'upload' => 'debug', // allow install by module file upload?
+	'download' => 'debug', // allow install by download from URL?
+);
 
 /**
  * Substitute modules
@@ -1301,6 +1554,35 @@ $config->defaultAdminTheme = 'AdminThemeDefault';
 $config->adminEmail = '';
 
 /**
+ * Settings specific to AdminThemeUikit
+ * 
+ * The settings shown below are only configured with this setting and not with the module config.
+ * 
+ * Please note, in the `customLessFiles` and `customCssFile` settings, the paths `/site/templates/`, 
+ * `/site/assets/`, and `/site/modules/` are converted to their actual values at runtime (if different). 
+ * Any other paths are left as-is, but must be relative to the ProcessWire installation root. Meaning,
+ * anything in /site/ must start with /site/ and not /subdir/site/ or /path/to/site/, regardless of 
+ * whether ProcessWire is running from the domain root or a subdirectory.
+ * 
+ * @var array
+ * @since 3.0.179
+ * 
+ * #property string style Admin theme base style: 'reno', 'rock', blank for system default
+ * #property bool recompile Specify true for one request to force recompile of admin LESS to CSS in that request. Remember to set back to false.
+ * #property bool compress Compress compiled CSS?
+ * #property array customLessFiles Custom .less files to include, relative to PW installation root.
+ * #property string customCssFile Target custom .css file to compile custom .less file(s) to. 
+ * 
+ */
+$config->AdminThemeUikit = array(
+	'style' => '',
+	'recompile' => false,
+	'compress' => true, 
+	'customLessFiles' => array('/site/templates/admin.less'), 
+	'customCssFile' => '/site/assets/admin.css',
+);
+
+/**
  * Fatal error HTML
  * 
  * HTML used for fatal error messages in HTTP mode.
@@ -1312,7 +1594,16 @@ $config->adminEmail = '';
  * @var string
  * 
  */
-$config->fatalErrorHTML = "<p style='background:crimson;color:white;padding:0.5em;font-family:sans-serif;'><b>{message}</b><br /><br /><small>{why}</small></p>";
+$config->fatalErrorHTML = "<p style='background:crimson;color:white;padding:1em;font-family:sans-serif;font-size:16px;line-height:20px;clear:both'>{message}<br /><br /><small>{why}</small></p>";
+
+/**
+ * HTTP code to send for fatal error (typically 500 or 503)
+ * 
+ * @var int
+ * @since 3.0.151
+ * 
+ */
+$config->fatalErrorCode = 500;
 
 /**
  * Settings for modal windows
@@ -1413,8 +1704,9 @@ $config->lazyPageChunkSize = 250;
  * Uncomment and paste into /site/config.php if you want to use this
  * 
  * $config->InputfieldWrapper = array(
- *	'useDependencies' => true,
- * 	'requiredLabel' => 'Missing required value', 
+ *   'useDependencies' => true,
+ *   'requiredLabel' => 'Missing required value', 
+ *   'columnWidthSpacing' => 0, 
  *	);
  * 
  */
@@ -1612,6 +1904,8 @@ $config->versionName = '';
  * column width spacing for inputfields: used by some admin themes to communicate to InputfieldWrapper
  * 
  * Value is null, 0, or 1 or higher. This should be kept at null in this file. 
+ * 
+ * This can also be specified with $config->InputfieldWrapper('columnWidthSpacing', 0); (3.0.158+)
  *
  */
 $config->inputfieldColumnWidthSpacing = null;

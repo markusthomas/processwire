@@ -46,6 +46,7 @@
  * @method bool deleteTemplateField(Template $template, Field $field)
  * @method Field cloneField(Field $field)
  * @method void renamedField(Field $field, $prevName) 
+ * @method void savedField(Field $field)
  * @method void install()
  * @method void uninstall()
  * 
@@ -98,6 +99,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function init() { }
+	public function ready() { }
 
 	/**
 	 * Set last access field
@@ -495,6 +497,23 @@ abstract class Fieldtype extends WireData implements Module {
 	}
 
 	/**
+	 * Is given value one that should cause the DB row(s) to be deleted rather than saved?
+	 * 
+	 * Not applicable to Fieldtypes that override the savePageField() method with their own
+	 * implementation, unless they also use this method. 
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @param mixed $value
+	 * @return bool
+	 * @since 3.0.150
+	 * 
+	 */
+	public function isDeleteValue(Page $page, Field $field, $value) {
+		return $value === $this->getBlankValue($page, $field); 
+	}
+
+	/**
 	 * Return whether the given value is considered empty or not.
 	 * 
 	 * This can be anything that might be present in a selector value and thus is
@@ -503,6 +522,16 @@ abstract class Fieldtype extends WireData implements Module {
 	 * 
 	 * Example: an integer or text Fieldtype might not consider a "0" to be empty,
 	 * whereas a Page reference would. 
+	 * 
+	 * This method is primarily used by the PageFinder::whereEmptyValuePossible()
+	 * method to determine whether to include non-present (null) rows. 
+	 * 
+	 * 3.0.164+: If given a Selector object for $value, PageFinder is proposing 
+	 * handling the empty-value match condition internally rather than calling
+	 * the Fieldtype’s getMatchQuery() method. Return true if this Fieldtype would
+	 * prefer to handle the match, or false if not. Fieldtype modules do not need
+	 * to consider this unless they want to override the default empty value match
+	 * behavior in PageFinder::whereEmptyValuePossible().
 	 * 
 	 * #pw-group-finding
 	 * 
@@ -672,32 +701,91 @@ abstract class Fieldtype extends WireData implements Module {
 	/**
 	 * Get the database query that matches a Fieldtype table’s data with a given value.
 	 *
-	 * Possible template method: If overridden, children should not call this parent method. 
+	 * Possible template method: If overridden, children do not need to call this method
+	 * if they update the $query themselves. 
+	 *
+	 * Note the following additional properties are available from the $query argument: 
+	 * 
+	 *  - `$query->field` (Field): Field instance that being referred to match.
+	 *  - `$query->group` (string): Original group of the field in the selector (when applicable).
+	 *  - `$query->selector` (Selector): Original Selector object (matching the $field).
+	 *  - `$query->selectors` (Selectors): Original Selectors object (matching $field and others).
+	 *  - `$query->parentQuery` (DatabaseQuerySelect): Parent database query that $query will be merged into.
+	 *  - `$query->pageFinder` (PageFinder): The PageFinder instance that initiated the query, for additional info.
 	 * 
 	 * #pw-group-finding
 	 *
-	 * @param DatabaseQuerySelect $query
+	 * @param PageFinderDatabaseQuerySelect $query
 	 * @param string $table The table name to use
 	 * @param string $subfield Name of the subfield (typically 'data', unless selector explicitly specified another)
-	 * @param string $operator The comparison operator
-	 * @param mixed $value The value to find
-	 * @return DatabaseQuery $query
+	 * @param string $operator The comparison operator. 
+	 *  - This base Fieldtype class accepts only database operators (=, !=, >, >=, <, <=, &). 
+	 *  - Other Fieldtypes may choose to accept more operators according to need of Fieldtype.
+	 * @param mixed $value Value to find. 
+	 *  - If given array, this base Fieldtype class (only) will match via OR condition. (3.0.182+)
+	 *  - Other Fieldtypes may choose to interpret array values differently according need of Fieldtype.
+	 * @return PageFinderDatabaseQuerySelect|DatabaseQuerySelect $query
 	 * @throws WireException
 	 *
 	 */
 	public function getMatchQuery($query, $table, $subfield, $operator, $value) {
 
-		$database = $this->wire('database');
+		$database = $this->wire()->database;
 
-		if(!$database->isOperator($operator)) 
-			throw new WireException("Operator '{$operator}' is not implemented in {$this->className}"); 
+		if(!$database->isOperator($operator)) {
+			throw new WireException("Operator '{$operator}' is not implemented in {$this->className}");
+		}
 
 		$table = $database->escapeTable($table); 
 		$subfield = $database->escapeCol($subfield);
-		$quoteValue = $database->quote($value); 
-
-		$query->where("{$table}.{$subfield}{$operator}$quoteValue"); // QA
+		$operator = $database->escapeOperator($operator, WireDatabasePDO::operatorTypeComparison); 
+		
+		if(is_array($value)) {
+			$a = array();
+			foreach($value as $v) {
+				$bindKey = $query->bindValueGetKey($v);
+				$a[] = "{$table}.{$subfield}{$operator}{$bindKey}";
+			}
+			$query->where('(' . implode(' OR ', $a) . ')'); 
+		} else {
+			$query->where("{$table}.{$subfield}{$operator}?", $value); // QA
+		}
+		
 		return $query; 
+	}
+
+	/**
+	 * Get or update query to sort by given $field or $subfield
+	 * 
+	 * Return false if this Fieldtype does not have built-in sort logic and PageFinder should handle it. 
+	 * Return string of query to add to ORDER BY statement, or boolean true if method added it already. 
+	 * 
+	 * #pw-internal
+	 *
+	 * @param Field $field
+	 * @param DatabaseQuerySelect $query
+	 * @param string $table
+	 * @param string $subfield
+	 * @param bool $desc True for descending, false for ascending
+	 * @return bool|string
+	 * @since 3.0.167
+	 * 
+	 */
+	public function getMatchQuerySort(Field $field, $query, $table, $subfield, $desc) {
+		if($query && $table && $field && $subfield && $desc) {}
+		return false;
+	}
+	
+	/**
+	 * Called when field of this type is initialized at boot or after lazy loaded
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param Field $field
+	 * @since 3.0.194
+	 *
+	 */
+	public function initField(Field $field) {
 	}
 
 	/**
@@ -918,16 +1006,73 @@ abstract class Fieldtype extends WireData implements Module {
 	
 
 	/**
-	 * Return trimmed database schema array of any parts that aren't needed for data loading
+	 * Trim and/or filter database schema
+	 * 
+	 * Returns schema with all native columns and schema settings removed,
+	 * leaving just the custom columns for the schema, optionally filtered
+	 * by given $options array. 
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param array $schema
+	 * @param array $schema Schema from getDatabaseSchema() call (not verbose schema)
+	 * @param array $options Additional options (since 3.0.158)
+	 *  - `trimMeta` (bool): Trim meta data from schema, like 'keys' and 'xtra'? (default=true)
+	 *  - `trimDefault` (bool): Trim default columns from schema, like 'pages_id' and 'sort'? (default=true)
+	 *  - `findDefaultNULL` (bool): When true, return all columns that specify NULL as their default. 
+	 *  - `findAutoIncrement` (bool): When true, return all columns that specify AUTO_INCREMENT.
+	 *  - `findType` (string): Return all columns that match the given column type (i.e. "int", "varchar", "text")
+	 *     Precede types like "int" or "text" with "*" to match all of type (i.e. "*int" matches "tinyint", "int", etc.)
 	 * @return array
 	 *
 	 */
-	public function trimDatabaseSchema(array $schema) {
-		unset($schema['pages_id'], $schema['keys'], $schema['xtra'], $schema['sort']); 
+	public function trimDatabaseSchema(array $schema, array $options = array()) {
+		
+		$defaults = array(
+			'trimMeta' => true, 
+			'trimDefault' => true, // trim default columns (like pages_id and sort) from result?
+			'findType' => '',
+			'findAutoIncrement' => false,
+			'findDefaultNULL' => false,
+		);
+		
+		$options = array_merge($defaults, $options);
+
+		if($options['trimMeta']) unset($schema['keys'], $schema['xtra']); 
+		if($options['trimDefault']) unset($schema['pages_id'], $schema['sort']); 
+		
+		$findType = $options['findType'] ? strtolower(trim($options['findType'], '*')) : false; // find in column type
+		$findAllType = $findType && $findType !== $options['findType']; // find all variations of findType
+		$useFind = $findType || $options['findAutoIncrement'] || $options['findDefaultNULL'];
+	
+		// exit early if no finds are requested
+		if(!$useFind) return $schema;
+		
+		foreach($schema as $colName => $colSchema) {
+			$match = null;
+			$colSchema = strtolower($colSchema) . ' ';
+			list($colType, $colMeta) = explode(' ', $colSchema, 2);
+			
+			if($options['findAutoIncrement'] && $match !== false) {
+				$match = strpos($colMeta, 'auto_increment') !== false;
+			}
+			
+			if($options['findDefaultNULL'] && $match !== false) {
+				$match = strpos($colMeta, 'default null') !== false;
+			}
+			
+			if($findType && $match !== false && strpos($colType, $findType) !== false) {
+				if($colType === $findType || strpos($colType, "$findType ") === 0 || strpos($colType, "$findType(") === 0) {
+					$match = true; // exact match
+				} else if($findAllType && strpos($colType, $findType) === 0) {
+					$match = true; // partial match at front, i.e. "int" matching integer
+				} else if($findAllType && preg_match('/^[a-z]*' . $findType . '\b/i', $colType)) {
+					$match = true; // partial match at rear, i.e. "int" matching "tinyint", "smallint", "mediumint", etc.
+				}
+			}
+			
+			if(!$match) unset($schema[$colName]); 
+		}
+		
 		return $schema; 
 	}
 
@@ -967,16 +1112,18 @@ abstract class Fieldtype extends WireData implements Module {
 
 		if(!$page->id || !$field->id) return null;
 
+		/** @var WireDatabasePDO $database */
 		$database = $this->wire('database');
-		$page_id = (int) $page->id; 
 		$schema = $this->getDatabaseSchema($field);
 		$table = $database->escapeTable($field->table);
 		$value = null;
 		$stmt = null;
-		
+	
+		/** @var DatabaseQuerySelect $query */
 		$query = $this->wire(new DatabaseQuerySelect());
 		$query = $this->getLoadQuery($field, $query); 
-		$query->where("$table.pages_id='$page_id'"); 
+		$bindKey = $query->bindValueGetKey($page->id); 
+		$query->where("$table.pages_id=$bindKey"); 
 		$query->from($table); 
 
 		try {
@@ -1027,6 +1174,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function ___loadPageFieldFilter(Page $page, Field $field, $selector) {
+		if(false) throw new WireException(); // a gift for the ide
 		$this->setLoadPageFieldFilters($field, $selector);
 		$value = $this->loadPageField($page, $field);
 		$this->setLoadPageFieldFilters($field, null);
@@ -1118,7 +1266,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 * @param Page $page Page object to save. 
 	 * @param Field $field Field to retrieve from the page. 
 	 * @return bool True on success, false on DB save failure.
-	 * @throws WireException
+	 * @throws WireException|\PDOException|WireDatabaseException
 	 *
 	 */
 	public function ___savePageField(Page $page, Field $field) {
@@ -1132,20 +1280,24 @@ abstract class Fieldtype extends WireData implements Module {
 		$database = $this->wire('database');
 		$value = $page->get($field->name);
 
-		// if the value is the same as the default, then remove the field from the database because it's redundant
-		if($value === $this->getBlankValue($page, $field)) return $this->deletePageField($page, $field); 
+		// if the value is one that should be deleted, then remove the field from the database because it's redundant
+		if($this->isDeleteValue($page, $field, $value)) {
+			return $this->deletePageField($page, $field);
+		}
 
 		$value = $this->sleepValue($page, $field, $value); 
 
 		$page_id = (int) $page->id; 
 		$table = $database->escapeTable($field->table); 
 		$schema = array();
+		$bindValues = array(':page_id' => $page_id);
 
 		if(is_array($value)) { 
 
 			$sql1 = "INSERT INTO `$table` (pages_id";
-			$sql2 = "VALUES('$page_id'";
+			$sql2 = "VALUES(:page_id";
 			$sql3 = "ON DUPLICATE KEY UPDATE ";
+			$n = 0;
 
 			foreach($value as $k => $v) {
 				$k = $database->escapeCol($k);
@@ -1156,8 +1308,9 @@ abstract class Fieldtype extends WireData implements Module {
 					if(empty($schema)) $schema = $this->getDatabaseSchema($field); 
 					$sql2 .= isset($schema[$k]) && stripos($schema[$k], ' DEFAULT NULL') ? ",NULL" : ",''";
 				} else {
-					$v = $database->escapeStr($v);
-					$sql2 .= ",'$v'";
+					$bindKey = ':v' . (++$n);
+					$bindValues[$bindKey] = $v;
+					$sql2 .= ",$bindKey";
 				}
 				
 				$sql3 .= "`$k`=VALUES(`$k`), ";
@@ -1170,18 +1323,36 @@ abstract class Fieldtype extends WireData implements Module {
 			if(is_null($value)) {
 				// check if schema explicitly allows NULL
 				$schema = $this->getDatabaseSchema($field); 
-				$value = isset($schema['data']) && stripos($schema['data'], ' DEFAULT NULL') ? "NULL" : "''";
+				$null = isset($schema['data']) && stripos($schema['data'], ' DEFAULT NULL') ? "NULL" : "''";
+				$sql = "INSERT INTO `$table` (pages_id, data) VALUES(:page_id, $null) ";	
 			} else {
-				$value = "'" . $database->escapeStr($value) . "'";
+				$bindValues[":value"] = $value;
+				$sql = "INSERT INTO `$table` (pages_id, data) VALUES(:page_id, :value) ";	
 			}
-
-			$sql = 	"INSERT INTO `$table` (pages_id, data) " . 
-					"VALUES('$page_id', $value) " . 
-					"ON DUPLICATE KEY UPDATE data=VALUES(data)";	
+			
+			$sql .= 'ON DUPLICATE KEY UPDATE data=VALUES(data)';
 		}
 		
 		$query = $database->prepare($sql);
-		$result = $query->execute();
+		foreach($bindValues as $bindKey => $bindValue) {
+			if(is_int($bindValue)) {
+				$query->bindValue($bindKey, $bindValue, \PDO::PARAM_INT);
+			} else {
+				$query->bindValue($bindKey, $bindValue);
+			}
+		}
+		
+		try {
+			$result = $query->execute();
+			
+		} catch(\PDOException $e) {
+			if($e->getCode() == 23000) {
+				$message = sprintf($this->_('Value not allowed for field “%s” because it is already in use'), $field->name);
+				throw new WireDatabaseException($message, $e->getCode(), $e);
+			} else {
+				throw $e;
+			}
+		}
 
 		return $result; 
 	}
@@ -1226,24 +1397,10 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function ___deletePageField(Page $page, Field $field) {
-
-		if(!$field->id) throw new WireException("Unable to delete from '{$field->table}' for field that doesn't exist in fields table"); 
-
 		// no need to delete on a new Page because it's not in the table yet
-		if($page->isNew()) return true; 
-
-		// clear the value from the page
-		// $page->set($field->name, $this->getBlankValue($page, $field)); 
-		unset($page->{$field->name}); 
-
-		// Delete all instances of it from the field table
-		$database = $this->wire('database');
-		$table = $database->escapeTable($field->table);
-		$page_id = (int) $page->id; 
-		$query = $database->prepare("DELETE FROM `$table` WHERE pages_id=:page_id"); 
-		$query->bindValue(":page_id", $page_id, \PDO::PARAM_INT);
-		$result = $query->execute();
-		return $result;
+		if($page->isNew()) return true;
+		unset($page->{$field->name}); // clear the value from the page
+		return $this->emptyPageFieldTable($page, $field);
 	}
 	
 	/**
@@ -1261,13 +1418,29 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function ___emptyPageField(Page $page, Field $field) {
-		if(!$field->id) throw new WireException("Unable to empty from '{$field->table}' for field that doesn't exist in fields table");
-		$table = $this->wire('database')->escapeTable($field->table);
-		$query = $this->wire('database')->prepare("DELETE FROM `$table` WHERE pages_id=:page_id");
+		return $this->emptyPageFieldTable($page, $field);
+	}
+
+	/**
+	 * Empty DB table of page field
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @return bool
+	 * @throws WireException
+	 * @since 3.0.189
+	 * 
+	 */
+	protected function emptyPageFieldTable(Page $page, Field $field) {
+		if(!$field->id) {
+			throw new WireException("Unable to empty table '$field->table' for field that doesn’t have an id");
+		}
+		$database = $this->wire()->database;
+		$table = $database->escapeTable($field->table);
+		$query = $database->prepare("DELETE FROM `$table` WHERE pages_id=:page_id");
 		$query->bindValue(":page_id", $page->id, \PDO::PARAM_INT);
 		return $query->execute();
 	}
-
 	
 	/**
 	 * Move this field’s data from one page to another.
@@ -1281,12 +1454,12 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function ___replacePageField(Page $src, Page $dst, Field $field) {
-		$database = $this->wire('database');
+		$database = $this->wire()->database;
 		$table = $database->escapeTable($field->table);
-		$this->emptyPageField($dst, $field); 
+		$this->deletePageField($dst, $field); 
 		// move the data
 		$sql = "UPDATE `$table` SET pages_id=:dstID WHERE pages_id=:srcID";
-		$query = $this->wire('database')->prepare($sql);
+		$query = $database->prepare($sql);
 		$query->bindValue(':dstID', (int) $dst->id);
 		$query->bindValue(':srcID', (int) $src->id);
 		$result = $query->execute();
@@ -1311,7 +1484,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 * 
 	 */
 	public function ___deleteTemplateField(Template $template, Field $field) {
-		return $this->wire('fields')->deleteFieldDataByTemplate($field, $template); 
+		return $this->wire()->fields->deleteFieldDataByTemplate($field, $template); 
 	}
 
 	/**
@@ -1341,6 +1514,19 @@ abstract class Fieldtype extends WireData implements Module {
 	 */
 	public function ___renamedField(Field $field, $prevName) {
 		if($field && $prevName) {}
+	}
+
+	/**
+	 * Called when Field using this Fieldtype has been saved 
+	 * 
+	 * This is primarily so that Fieldtype modules can identify when their fields are 
+	 * saved without having to add a hook to the $fields API var. 
+	 * 
+	 * @param Field $field
+	 * @since 3.0.171
+	 * 
+	 */
+	public function ___savedField(Field $field) {
 	}
 
 	/**
@@ -1376,6 +1562,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 *
 	 */
 	public function ___install() {
+		if(false) throw new WireException(); // an offering for phpstorm
 		return true; 
 	}
 
@@ -1389,7 +1576,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 * 
 	 * #pw-group-other
 	 * 
-	 * @throws WireException Should throw an Exception if uninstsall can't be completed.
+	 * @throws WireException Should throw an Exception if uninstall can't be completed.
 	 *
 	 */
 	public function ___uninstall() {
@@ -1418,6 +1605,7 @@ abstract class Fieldtype extends WireData implements Module {
 	 */
 	public function ___upgrade($fromVersion, $toVersion) {
 		// any code needed to upgrade between versions
+		if($fromVersion && $toVersion && false) throw new WireException(); // to make the ide stop complaining
 	}
 
 	/**

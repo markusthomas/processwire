@@ -28,7 +28,7 @@
  * ~~~~~
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2021 by Ryan Cramer
  * https://processwire.com
  * 
  * @method string getMarkup($key = null) Render a simple/default markup value for each item #pw-internal
@@ -75,7 +75,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	protected $keyIndex = array();
 
 	/**
-	 * Template mehod that descendant classes may use to validate items added to this WireArray
+	 * Template method that descendant classes may use to validate items added to this WireArray
 	 * 
 	 * #pw-internal
 	 *
@@ -123,14 +123,14 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 			// given item exists in this PageArray (or at least has)
 			$key = $this->keyIndex[$id];
 			if(isset($this->data[$key])) {
-				$page = $this->data[$key];
+				$page = $this->data[$key]; /** @var Page $page */
 				if($page->id === $id) {
 					// found it
 					return $key; 
 				}
 			}
-			// if this point is reached, then index needs to be rebuilt
-			// because either item is no longer here, or has moved
+			// if this (maybe unreachable) point is reached, then index needs to 
+			// be rebuilt because either item is no longer here, or has moved 
 			$this->keyIndex = array();
 			foreach($this->data as $key => $page) {
 				$this->keyIndex[$page->id] = $key;
@@ -163,7 +163,24 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 *
 	 */
 	public function makeBlankItem() {
-		return $this->wire('pages')->newPage();
+		return $this->wire()->pages->newPage();
+	}
+	
+	/**
+	 * Creates a new blank instance of this PageArray, for internal use.
+	 *
+	 * #pw-internal
+	 *
+	 * @return PageArray
+	 *
+	 */
+	public function makeNew() {
+		$class = get_class($this);
+		/** @var PageArray $newArray */
+		$newArray = $this->wire(new $class());
+		// $newArray->finderOptions($this->finderOptions());
+		if($this->lazyLoad) $newArray->_lazy(true);
+		return $newArray;
 	}
 
 	/**
@@ -180,18 +197,12 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 		if(!self::iterable($pages)) return $this; 
 		foreach($pages as $page) $this->add($page); 
 		if($pages instanceof PageArray) {
-			if(count($pages) < $pages->getTotal()) $this->setTotal($this->getTotal() + ($pages->getTotal() - count($pages))); 
+			if(count($pages) < $pages->getTotal()) {
+				$this->setTotal($this->getTotal() + ($pages->getTotal() - count($pages)));
+			}
 		}
 		return $this;
 	}
-
-	/*
-	public function get($key) {
-		if(ctype_digit("$key")) return parent::get($key); 
-		@todo check if selector, then call findOne(). If it returns null, return a NullPage instead. 
-		return null;
-	}
-	*/
 
 	/**
 	 * Does this PageArray contain the given index or Page?
@@ -235,104 +246,15 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 
 		if($this->isValidItem($page)) {
 			parent::add($page); 
-			$this->numTotal++;
 
 		} else if($page instanceof PageArray || is_array($page)) {
 			return $this->import($page);
 
 		} else if(ctype_digit("$page")) {
-			$page = $this->wire('pages')->get("id=$page");
-			if($page->id) {
-				parent::add($page); 
-				$this->numTotal++;
-			}
+			$page = $this->wire()->pages->get("id=$page");
+			if($page->id) parent::add($page); 
 		}
 		return $this;
-	}
-
-
-	/**
-	 * Sets an index in the PageArray.
-	 * 
-	 * #pw-internal
-	 *
-	 * @param int $key Key of item to set.
-	 * @param Page $value Value of item. 
-	 * @return $this
-	 * 
-	 */
-	public function set($key, $value) {
-		$has = $this->has($key); 
-		parent::set($key, $value); 
-		if(!$has) $this->numTotal++;
-		return $this; 
-	}
-
-	/**
-	 * Prepend a Page to the beginning of the PageArray. 
-	 * 
-	 * #pw-internal
-	 *
-	 * @param Page|PageArray $item 
-	 * @return WireArray This instance.
-	 * 
-	 */
-	public function prepend($item) {
-		parent::prepend($item);
-		// note that WireArray::prepend does a recursive call to prepend with each item,
-		// so it's only necessary to increase numTotal if the given item is Page (vs. PageArray)
-		if($item instanceof Page) $this->numTotal++; 
-		return $this; 
-	}
-
-
-	/**
-	 * Remove the given Page or key from the PageArray. 
-	 * 
-	 * #pw-internal
-	 * 
-	 * @param int|Page $key
-	 * @return $this This PageArray instance
-	 * 
-	 */
-	public function remove($key) {
-
-		// if a Page object has been passed, determine its key
-		if($this->isValidItem($key)) {
-			$key = $this->getItemKey($key);
-		} 
-		if($this->has($key)) {
-			parent::remove($key);
-			$this->numTotal--;
-		}
-
-		return $this; 
-	}
-
-	/**
-	 * Shift the first Page off of the PageArray and return it. 
-	 * 
-	 * #pw-internal
-	 * 
-	 * @return Page|NULL
-	 * 
-	 */
-	public function shift() {
-		if($this->numTotal) $this->numTotal--; 
-		return parent::shift(); 
-	}
-
-	/**
-	 * Pop the last page off of the PageArray and return it. 
-	 * 
-	 * #pw-internal
-	 *
-	 * @return Page|NULL 
-	 * 
-	 */ 
-	public function pop() {
-		if($this->numTotal) $this->numTotal--; 
-		return parent::pop();
 	}
 
 	/**
@@ -502,6 +424,23 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	}
 
 	/**
+	 * Like the base get() method but can only return Page objects (whether Page or NullPage)
+	 * 
+	 * @param int|string|array $key Provide any of the following:
+	 *  - Key of Page to retrieve.
+	 *  - A selector string or selector array, to return the first item that matches the selector.
+	 *  - A string containing the "name" property of any Page, and the matching Page will be returned.
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 * @see WireArray::get()
+	 * 
+	 */
+	public function getPage($key) {
+		$value = $this->get($key);
+		return $value instanceof Page ? $value : $this->wire()->pages->newNullPage();
+	}
+
+	/**
 	 * Find all pages in this PageArray that match the given selector (non-destructive)
 	 *
 	 * This is non destructive and returns a brand new PageArray.
@@ -510,6 +449,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 *
 	 * @param string $selector AttributeSelector string.
 	 * @return PageArray|WireArray New PageArray instance
+	 * @see WireArray::find()
 	 *
 	 */
 	public function find($selector) {
@@ -517,16 +457,84 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	}
 
 	/**
-	 * Same as find, but returns a single Page rather than PageArray or FALSE if empty.
+	 * Same as find() method, but returns a single Page rather than PageArray or FALSE if empty.
 	 * 
 	 * #pw-internal
 	 *
 	 * @param string $selector
 	 * @return Page|bool
+	 * @see WireArray::findOne()
 	 *
 	 */
 	public function findOne($selector) {
 		return parent::findOne($selector);
+	}
+
+	/**
+	 * Same as find() or findOne() methods, but always returns a Page (whether Page or NullPage)
+	 *
+	 * @param string $selector
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 *
+	 */
+	public function findOnePage($selector) {
+		$value = parent::findOne($selector);
+		return $value instanceof Page ? $value : $this->wire()->pages->newNullPage();
+	}
+
+	/**
+	 * Get Page from this PageArray having given name, or return NullPage if not present
+	 * 
+	 * @param string $name
+	 * @return NullPage|Page
+	 * @since 3.0.162
+	 * 
+	 */
+	public function getPageByName($name) {
+		return $this->getPageByProperty('name', $name, true); 
+	}
+
+	/**
+	 * Get Page from this PageArray having given ID, or return NullPage if not present
+	 * 
+	 * @param int $id
+	 * @return NullPage|Page
+	 * @since 3.0.162
+	 *
+	 */
+	public function getPageByID($id) {
+		$id = (int) $id;
+		if(isset($this->keyIndex[$id])) {
+			$k = $this->keyIndex[$id];
+			if(isset($this->data[$k]) && $this->data[$k]->id === $id) return $this->data[$k];
+		}
+		return $this->getPageByProperty('id', (int) $id, true);
+	}
+	
+	/**
+	 * Get first found Page object matching property/value, or return NullPage if not present in this PageArray
+	 * 
+	 * #pw-internal
+	 *
+	 * @param string $property Name of page property or field
+	 * @param string|mixed $value Value to match 
+	 * @param bool $strict Match value with strict type enforcement? (default=false)
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 *
+	 */
+	public function getPageByProperty($property, $value, $strict = false) {
+		$foundPage = null;
+		foreach($this->data as $item) {
+			if($strict) {
+				if($item->get($property) === $value) $foundPage = $item;
+			} else {
+				if($item->get($property) == $value) $foundPage = $item;
+			}
+			if($foundPage) break;
+		}
+		return $foundPage ? $foundPage : $this->wire()->pages->newNullPage();
 	}
 
 	/**
@@ -538,7 +546,12 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 *
 	 */
 	protected function filterDataSelectors(Selectors $selectors) { 
-		// @todo make it remove references to include= statements since not applicable in-memory
+		$disallowed = array('include', 'check_access', 'checkAccess');
+		foreach($selectors as $selector) {
+			if(in_array($selector->field(), $disallowed)) {
+				$selectors->remove($selector);
+			}
+		}
 		parent::filterDataSelectors($selectors);
 	}
 
@@ -565,7 +578,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 			$value = $item->getProperty($property); 
 			if(is_null($value)) {
 				$value = $item->first();
-				$value = $this->getItemPropertyValue($value, $property);
+				if($value) $value = $this->getItemPropertyValue($value, $property);
 			}
 		} else {
 			$value = $item->$property;
@@ -584,6 +597,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * @return Page[]|\ArrayObject|PageArrayIterator
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		if($this->lazyLoad) return new PageArrayIterator($this->data, $this->finderOptions);	
 		return parent::getIterator();
@@ -651,12 +665,12 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param array $options
+	 * @param array|null $options Specify array to set or omit this argument to get
 	 * @return array
 	 * 
 	 */
-	public function finderOptions(array $options = array()) {
-		$this->finderOptions = $options;
+	public function finderOptions($options = null) {
+		if(is_array($options)) $this->finderOptions = $options;
 		return $this->finderOptions;
 	}
 
@@ -683,6 +697,9 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 */
 	protected function trackAdd($item, $key) {
 		parent::trackAdd($item, $key);
+		if(!$item instanceof Page) return;
+		/** @var Page $item */
+		if(!isset($this->keyIndex[$item->id])) $this->numTotal++;
 		$this->keyIndex[$item->id] = $key;
 	}
 
@@ -695,7 +712,12 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 */
 	protected function trackRemove($item, $key) {
 		parent::trackRemove($item, $key);
-		unset($this->keyIndex[$item->id]);
+		if(!$item instanceof Page) return;
+		/** @var Page $item */
+		if(isset($this->keyIndex[$item->id])) {
+			if($this->numTotal) $this->numTotal--;
+			unset($this->keyIndex[$item->id]);
+		}
 	}
 }
 

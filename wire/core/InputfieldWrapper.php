@@ -3,7 +3,7 @@
 /**
  * ProcessWire InputfieldWrapper
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  *
  * About InputfieldWrapper
@@ -24,7 +24,49 @@
  * @property InputfieldsArray|null $children Inputfield instances that are direct children of this InputfieldWrapper.  #pw-group-properties
  * 
  * @method string renderInputfield(Inputfield $inputfield, $renderValueMode = false) #pw-group-output
- * @method Inputfield new($typeName, $name = '', $label = '', array $settings = array()) #pw-group-manipulation
+ * @method Inputfield new($typeName, $name = '', $label = '', array $settings = []) #pw-group-manipulation
+ * 
+ * @property InputfieldAsmSelect $InputfieldAsmSelect
+ * @property InputfieldButton $InputfieldButton
+ * @property InputfieldCheckbox $InputfieldCheckbox
+ * @property InputfieldCheckboxes $InputfieldCheckboxes
+ * @property InputfieldCKEditor $InputfieldCkeditor
+ * @property InputfieldCommentsAdmin $InputfieldCommentsAdmin
+ * @property InputfieldDatetime $InputfieldDatetime
+ * @property InputfieldEmail $InputfieldEmail
+ * @property InputfieldFieldset $InputfieldFieldset
+ * @property InputfieldFieldsetClose $InputfieldlFieldsetClose
+ * @property InputfieldFieldsetOpen $InputfieldFieldsetOpen
+ * @property InputfieldFieldsetTabOpen $InputfieldFieldsetTabOpen
+ * @property InputfieldFile $InputfieldFile
+ * @property InputfieldFloat $InputfieldFloat
+ * @property InputfieldForm $InputfieldForm
+ * @property InputfieldHidden $InputfieldHidden
+ * @property InputfieldIcon $InputfieldIcon
+ * @property InputfieldImage $InputfieldImage
+ * @property InputfieldInteger $InputfieldInteger
+ * @property InputfieldMarkup $InputfieldMarkup
+ * @property InputfieldName $InputfieldName
+ * @property InputfieldPage $InputfieldPage
+ * @property InputfieldPageAutocomplete $InputfieldPageAutocomplete
+ * @property InputfieldPageListSelect $InputfieldPageListSelect
+ * @property InputfieldPageListSelectMultiple $InputfieldPageListSelectMultiple
+ * @property InputfieldPageName $InputfieldPageName
+ * @property InputfieldPageTable $InputfieldPageTable
+ * @property InputfieldPageTitle $InputfieldPageTitle
+ * @property InputfieldPassword $InputfieldPassword
+ * @property InputfieldRadios $InputfieldRadios
+ * @property InputfieldRepeater $InputfieldRepeater
+ * @property InputfieldSelect $InputfieldSelect
+ * @property InputfieldSelectMultiple $InputfieldSelectMultiple
+ * @property InputfieldSelector $InputfieldSelector
+ * @property InputfieldSubmit $InputfieldSubmit
+ * @property InputfieldText $InputfieldText
+ * @property InputfieldTextarea $InputfieldTextarea
+ * @property InputfieldTextTags $InputfieldTextTags
+ * @property InputfieldToggle $InputfieldToggle
+ * @property InputfieldURL $InputfieldURL
+ * @property InputfieldWrapper $InputfieldWrapper
  *
  */
 
@@ -57,7 +99,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		'item_toggle' => "<i class='toggle-icon fa fa-fw fa-angle-down' data-to='fa-angle-down fa-angle-right'></i>", 
 		// ALSO: 
 		// InputfieldAnything => array( any of the properties above to override on a per-Inputifeld basis)
-		);
+	);
 
 	static protected $markup = array();
 
@@ -81,15 +123,17 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		'item_required_if' => 'InputfieldStateRequiredIf'
 		// ALSO: 
 		// InputfieldAnything => array( any of the properties above to override on a per-Inputifeld basis)
-		);
+	);
 
 	static protected $classes = array();
 
 	/**
 	 * Instance of InputfieldsArray, if this Inputfield contains child Inputfields
 	 *
+	 * @var InputfieldsArray
+	 * 
 	 */
-	protected $children = null;
+	protected $children;
 
 	/**
 	 * Array of Inputfields that had their processing delayed by dependencies. 
@@ -101,7 +145,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * Label displayed when a value is required but missing
 	 *
 	 */
-	protected $requiredLabel = '';
+	protected $requiredLabel = 'Missing required value';
 
 	/**
 	 * Whether or not column width is handled internally
@@ -117,26 +161,45 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function __construct() {
 		parent::__construct();
- 		$this->children = new InputfieldsArray(); 
+		$this->children = new InputfieldsArray();
 		$this->set('skipLabel', Inputfield::skipLabelFor); 
-		$this->requiredLabel = $this->_('Missing required value');
-		$columnWidthSpacing = $this->wire('config')->inputfieldColumnWidthSpacing; 
-		$columnWidthSpacing = is_null($columnWidthSpacing) ? 1 : (int) $columnWidthSpacing; 
-		$this->set('columnWidthSpacing', $columnWidthSpacing); 
 		$this->set('useDependencies', true); // whether or not to use consider field dependencies during processing
-		// allow optional override of any above settings with a $config->InputfieldWrapper array. 
-		$settings = $this->wire('config')->InputfieldWrapper; 
-		if(is_array($settings)) foreach($settings as $key => $value) {
-			if($key == 'requiredLabel') {
-				$this->requiredLabel = $value;
-			} else if($key == 'useColumnWidth') {
-				$this->useColumnWidth = $value;
-			} else {
-				$this->set($key, $value);
-			}
-		}
 		$this->set('renderValueMode', false); 
 		$this->set('quietMode', false); // suppress label, description and notes
+		$this->set('columnWidthSpacing', 0);
+	}
+
+	/**
+	 * Wired to API
+	 * 
+	 */
+	public function wired() {
+		
+		$config = $this->wire()->config;
+		
+		$this->wire($this->children);
+		$this->requiredLabel = $this->_('Missing required value');
+		
+		$columnWidthSpacing = $config->inputfieldColumnWidthSpacing;
+		$columnWidthSpacing = is_null($columnWidthSpacing) ? 1 : (int) $columnWidthSpacing;
+		if($columnWidthSpacing > 0) $this->set('columnWidthSpacing', $columnWidthSpacing);
+	
+		$columnWidthSpacing = null;
+		$settings = $config->InputfieldWrapper;
+		
+		if(is_array($settings)) {
+			foreach($settings as $key => $value) {
+				if($key == 'requiredLabel') {
+					$this->requiredLabel = $value;
+				} else if($key == 'useColumnWidth') {
+					$this->useColumnWidth = $value;
+				} else {
+					$this->set($key, $value);
+				}
+			}
+		}
+		
+		parent::wired();
 	}
 
 	/**
@@ -163,7 +226,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		if(self::debugPropertyAccess) throw new WireException("Access of attribute or setting: $key");
 		$value = $this->wire($key);
 		if($value) return $value; 
-		if($key == 'children') return $this->children; 
+		if($key === 'children') return $this->children(); 
 		if(($value = parent::get($key)) !== null) return $value; 
 		return null;
 	}
@@ -178,7 +241,14 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 *
 	 */
 	public function __get($key) {
-		if($key == 'children') return $this->children;
+		if($key === 'children') return $this->children();
+		if(strpos($key, 'Inputfield') === 0 && strlen($key) > 10) {
+			if($key === 'InputfieldWrapper') return $this->wire(new InputfieldWrapper()); 
+			$value = $this->wire()->modules->get($key);
+			if($value && $value instanceof Inputfield) return $value;
+			if(wireClassExists($key)) return $this->wire(new $key()); 
+			$value = null;
+		}
 		$value = parent::get($key); 
 		if(is_null($value)) $value = $this->getChildByName($key);
 		return $value; 
@@ -203,7 +273,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		} else if(is_array($item)) {
 			$this->importArray($item); 
 		} else {
-			$this->children->add($item); 
+			$this->children()->add($item); 
 			$item->setParent($this); 
 		}
 		return $this; 
@@ -310,7 +380,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function prepend(Inputfield $item) {
 		$item->setParent($this); 
-		$this->children->prepend($item); 
+		$this->children()->prepend($item); 
 		return $this; 
 	}
 
@@ -325,48 +395,139 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function append(Inputfield $item) {
 		$item->setParent($this); 
-		$this->children->append($item); 
+		$this->children()->append($item); 
+		return $this; 
+	}
+
+	/**
+	 * Insert new or existing Inputfield before or after another
+	 * 
+	 * @param Inputfield|array|string $item New or existing item Inputfield, name, or new item array to insert.
+	 * @param Inputfield|string $existingItem Existing item or item name you want to insert before.
+	 * @param bool $before True to insert before, false to insert after (default=false).
+	 * @return $this
+	 * @throws WireException
+	 * @since 3.0.196
+	 * 
+	 */
+	public function insert($item, $existingItem, $before = false) {
+		
+		$children = $this->children();
+		
+		if($existingItem instanceof Inputfield) {
+			// ok
+		} else if(is_string($existingItem)) {
+			$name = $existingItem;
+			$existingItem = $this->getByName($name);
+			if(!$existingItem) throw new WireException("Cannot find Inputfield[name=$name] to insert");
+		} else {
+			throw new WireException('Invalid value for $existingItem argument'); 
+		}
+		
+		if(is_array($item)) {
+			// new item definition
+			if(isset($item['name'])) {
+				// first check if there's an existing item with this name
+				$f = $this->getByName($item['name']); 
+				if($f) return $this->insert($f, $existingItem, $before);
+			}
+			$n = $children->count();
+			$this->add($item);
+			if($children->count() > $n) {
+				// new item was added
+				$item = $children->last();
+				$children->remove($item);
+			} else {
+				throw new WireException('Unable to insert new item: ' . print_r($item, true));
+			}
+		} else if(!$item instanceof Inputfield) {
+			// get item to insert by name
+			$name = (string) $item;
+			$item = $this->getByName($name);
+			if(!$item) {
+				// if named item isn't found, create one 
+				$item = $this->___new('text', $name, $name); 
+			}
+		}
+		
+		if($children->has($existingItem)) {
+			// existing item is a direct child of this InputfieldWrapper
+			$item->setParent($this);
+			$method = $before ? 'insertBefore' : 'insertAfter';
+			$children->$method($item, $existingItem);
+		} else {
+			// find existing item recursively
+			$f = $this->getByName($existingItem->attr('name')); 
+			if($f && $f->parent) {
+				// existing item was found
+				$existingItem = $f;
+				$existingItem->parent->insert($item, $existingItem, $before);
+			} else {
+				// existing item not found, add it as direct child
+				$this->add($existingItem);
+				$existingItem->parent->insert($item, $existingItem, $before);
+			}
+		}
+		
 		return $this; 
 	}
 
 	/**
 	 * Insert one Inputfield before one that’s already there.
 	 * 
+	 * Note: string or array values for either argument require 3.0.196+. 
+	 * 
+	 * ~~~~~
+	 * // example 1: Get existing Inputfields and insert first_name before last_name
+	 * $firstName = $form->getByName('first_name');
+	 * $lastName = $form->getByName('last_name'); 
+	 * $form->insertBefore($firstName, $lastName); 
+	 * 
+	 * // example 2: Same as above but use Inputfield names (3.0.196+)
+	 * $form->insertBefore('first_name', 'last_name'); 
+	 * 
+	 * // example 3: Create new Inputfield and insert before last_name (3.0.196+)
+	 * $form->insertBefore([ 'type' => 'text', 'name' => 'first_name' ], 'last_name'); 
+	 * ~~~~~
+	 * 
 	 * #pw-group-manipulation
 	 * 
-	 * @param Inputfield $item Item to insert.
-	 * @param Inputfield $existingItem Existing item you want to insert before.
+	 * @param Inputfield|array|string $item Item to insert 
+	 * @param Inputfield|string $existingItem Existing item you want to insert before.
 	 * @return $this
 	 *
 	 */
-	public function insertBefore(Inputfield $item, Inputfield $existingItem) {
-		if($this->children->has($existingItem)) {
-			$item->setParent($this);
-			$this->children->insertBefore($item, $existingItem);
-		} else if($this->getChildByName($existingItem->attr('name')) && $existingItem->parent) {
-			$existingItem->parent->insertBefore($item, $existingItem);
-		}
-		return $this; 
+	public function insertBefore($item, $existingItem) {
+		return $this->insert($item, $existingItem, true);
 	}
 
 	/**
 	 * Insert one Inputfield after one that’s already there.
 	 * 
+	 * Note: string or array values for either argument require 3.0.196+.
+	 * 
+	 * ~~~~~
+	 * // example 1: Get existing Inputfields, insert last_name after first_name
+	 * $lastName = $form->getByName('last_name');
+	 * $firstName = $form->getByName('first_name');
+	 * $form->insertAfter($lastName, $firstName);
+	 *
+	 * // example 2: Same as above but use Inputfield names (3.0.196+)
+	 * $form->insertBefore('last_name', 'first_name');
+	 *
+	 * // example 3: Create new Inputfield and insert after first_name (3.0.196+)
+	 * $form->insertAfter([ 'type' => 'text', 'name' => 'last_name' ], 'first_name');
+	 * ~~~~~
+	 * 
 	 * #pw-group-manipulation
 	 * 
-	 * @param Inputfield $item Item you want to insert
-	 * @param Inputfield $existingItem Existing item you want to insert after
+	 * @param Inputfield|array|string $item Item to insert
+	 * @param Inputfield|string $existingItem Existing item you want to insert after.
 	 * @return $this
 	 *
 	 */
-	public function insertAfter(Inputfield $item, Inputfield $existingItem) {
-		if($this->children->has($existingItem)) {
-			$item->setParent($this);
-			$this->children->insertAfter($item, $existingItem);
-		} else if($this->getChildByName($existingItem->attr('name')) && $existingItem->parent) {
-			$existingItem->parent->insertAfter($item, $existingItem);
-		}
-		return $this; 
+	public function insertAfter($item, $existingItem) {
+		return $this->insert($item, $existingItem, false);
 	}
 
 	/**
@@ -385,8 +546,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$item = $this->getChildByName($item);	
 			if(!$item) return $this;
 		}
-		if($this->children->has($item)) {
-			$this->children->remove($item);
+		if($this->children()->has($item)) {
+			$this->children()->remove($item);
 		} if($this->getChildByName($item->attr('name')) && $item->parent) {
 			$item->parent->remove($item);
 		}
@@ -399,12 +560,12 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	protected function preRenderChildren() {
 
-		if($this->getSetting('InputfieldWrapper_isPreRendered')) return $this->children; 
+		if($this->getSetting('InputfieldWrapper_isPreRendered')) return $this->children(); 
 
 		$children = $this->wire(new InputfieldWrapper()); 
 		$wrappers = array($children);
 
-		foreach($this->children as $inputfield) {
+		foreach($this->children() as $inputfield) {
 
 			$wrapper = end($wrappers); 
 
@@ -459,26 +620,32 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * 
 	 * @param Inputfield $inputfield
 	 * @param array $markup
+	 * @param array $classes
 	 * @since 3.0.144
 	 * 
 	 */
-	private function attributeInputfield(Inputfield $inputfield, &$markup) {
+	private function attributeInputfield(Inputfield $inputfield, &$markup, &$classes) {
 		
 		$inputfieldClass = $inputfield->className();
-		$markupTemplate = array('attr' => array(), 'wrapAttr' => array()); 
-		$classParents = $this->classParents($inputfield);
-		$classParents[] = $inputfieldClass;
+		$markupTemplate = array('attr' => array(), 'wrapAttr' => array(), 'set' => array());
+		$markupKeys = array($inputfieldClass, "name=$inputfield->name", "id=$inputfield->id");
 		$classKeys = array('class', 'wrapClass', 'headerClass', 'contentClass');
-		$classes = array();
+		$addClasses = array();
 		$attr = array();
 		$wrapAttr = array();
+		$sets = array();
+
+		foreach($markupKeys as $key) {
+			if(isset($markup[$key])) $markup = array_merge($markup, $markup[$key]);
+			if(isset($classes[$key])) $classes = array_merge($classes, $classes[$key]);
+		}
 		
-		foreach($classParents as $classParent) {
-			if(!isset($markup[$classParent])) continue;
-			$markupParent = array_merge($markupTemplate, $markup[$classParent]);
+		foreach(array_merge($this->classParents($inputfield), $markupKeys) as $key) {
+			if(!isset($markup[$key])) continue;
+			$markupParent = array_merge($markupTemplate, $markup[$key]);
 			foreach($classKeys as $classKey) {
 				if(!empty($markupParent[$classKey])) {
-					$classes[$classKey] = $markupParent[$classKey];
+					$addClasses[$classKey] = $markupParent[$classKey];
 				}
 			}
 			foreach($markupParent['attr'] as $k => $v) {
@@ -486,6 +653,9 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			}
 			foreach($markupParent['wrapAttr'] as $k => $v) {
 				$wrapAttr[$k] = $v;
+			}
+			foreach($markupParent['set'] as $k => $v) {
+				$sets[$k] = $v;
 			}
 		}
 
@@ -495,8 +665,11 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		foreach($wrapAttr as $attrName => $attrVal) {
 			$inputfield->wrapAttr($attrName, $attrVal);
 		}
-		foreach($classes as $classKey => $class) {
+		foreach($addClasses as $classKey => $class) {
 			$inputfield->addClass($class, $classKey);
+		}
+		foreach($sets as $setName => $setVal) {
+			$inputfield->set($setName, $setVal); 
 		}
 	}
 
@@ -510,7 +683,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 *
 	 */
 	public function ___render() {
-
+		
+		$sanitizer = $this->wire()->sanitizer;
 		$out = '';
 		$children = $this->preRenderChildren();
 		$columnWidthTotal = 0;
@@ -522,7 +696,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		$markup = array();
 		$classes = array();
 		$useColumnWidth = $this->useColumnWidth;
-		$renderAjaxInputfield = $this->wire('config')->ajax ? $this->wire('input')->get('renderInputfieldAjax') : null;
+		$renderAjaxInputfield = $this->wire()->config->ajax ? $this->wire()->input->get('renderInputfieldAjax') : null;
+		$lockedStates = array(Inputfield::collapsedNoLocked, Inputfield::collapsedYesLocked, Inputfield::collapsedBlankLocked);
 		
 		if($useColumnWidth === true && isset($_classes['form']) && strpos($_classes['form'], 'InputfieldFormNoWidths') !== false) {
 			$useColumnWidth = false;
@@ -536,20 +711,19 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		
 		foreach($children as $inputfield) {
 			
-			if($renderAjaxInputfield && $inputfield->attr('id') != $renderAjaxInputfield 
+			if($renderAjaxInputfield && $inputfield->attr('id') !== $renderAjaxInputfield 
 				&& !$inputfield instanceof InputfieldWrapper) {
 				
 				$skip = true;
 				foreach($inputfield->getParents() as $parent) {
 					/** @var InputfieldWrapper $parent */
-					if($parent->attr('id') == $renderAjaxInputfield) $skip = false;
+					if($parent->attr('id') === $renderAjaxInputfield) $skip = false;
 				}
 				if($skip && !empty($parents)) continue;
 			}
-				
-			$inputfieldClass = $inputfield->className();
-			$markup = isset($_markup[$inputfieldClass]) ? array_merge($_markup, $_markup[$inputfieldClass]) : $_markup; 
-			$classes = isset($_classes[$inputfieldClass]) ? array_merge($_classes, $_classes[$inputfieldClass]) : $_classes; 
+			
+			list($markup, $classes) = array($_markup, $_classes);
+			$this->attributeInputfield($inputfield, $markup, $classes);
 			
 			$renderValueMode = $this->getSetting('renderValueMode'); 
 			$collapsed = (int) $inputfield->getSetting('collapsed'); 
@@ -558,9 +732,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$showIf = $inputfield->getSetting('showIf'); 
 			
 			if($collapsed == Inputfield::collapsedHidden) continue; 
-			if($collapsed == Inputfield::collapsedNoLocked || $collapsed == Inputfield::collapsedYesLocked) $renderValueMode = true;
+			if(in_array($collapsed, $lockedStates)) $renderValueMode = true;
 
-			$this->attributeInputfield($inputfield, $_markup);
 			$ffOut = $this->renderInputfield($inputfield, $renderValueMode);
 			if(!strlen($ffOut)) continue;
 			$collapsed = (int) $inputfield->getSetting('collapsed');  // retrieve again after render
@@ -610,11 +783,11 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			// The inputfield classname is always used in its wrapping element
 			$ffAttrs = array(
 				'class' => str_replace(
-						array('{class}', '{name}'), 
-						array($inputfield->className(), $inputfield->attr('name')
-						), 
-						$classes['item'])
-					);
+					array('{class}', '{name}'), 
+					array($inputfield->className(), $inputfield->attr('name')
+				), 
+				$classes['item'])
+			);
 			if($inputfield instanceof InputfieldItemList) $ffAttrs['class'] .= " InputfieldItemList";
 			if($collapsed) $ffAttrs['class'] .= " collapsed$collapsed";
 
@@ -638,7 +811,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 					$collapsed === Inputfield::collapsedYesAjax ||
 					($isEmpty && $collapsed === Inputfield::collapsedBlank) ||
 					($isEmpty && $collapsed === Inputfield::collapsedBlankAjax) ||
-					($isEmpty && $collapsed === Inputfield::collapsedNoLocked) || // collapsedNoLocked assumed to be like a collapsedBlankLocked
+					($isEmpty && $collapsed === Inputfield::collapsedBlankLocked) ||
 					(!$isEmpty && $collapsed === Inputfield::collapsedPopulated)) {
 						$ffAttrs['class'] .= ' ' . $classes['item_collapsed'];
 					}
@@ -654,7 +827,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			} 
 		
 			// if inputfield produced no output, then move to next
-			if(!$ffOut) continue;
+			if(!strlen($ffOut)) continue;
 
 			// wrap the inputfield output
 			$attrs = '';
@@ -675,7 +848,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 					$label = $inputfield->entityEncode($label);
 				}
 				$icon = $inputfield->getSetting('icon');
-				$icon = $icon ? str_replace('{name}', $this->wire('sanitizer')->name(str_replace(array('icon-', 'fa-'), '', $icon)), $markup['item_icon']) : ''; 
+				$icon = $icon ? str_replace('{name}', $sanitizer->name(str_replace(array('icon-', 'fa-'), '', $icon)), $markup['item_icon']) : ''; 
 				$toggle = $collapsed == Inputfield::collapsedNever ? '' : $markup['item_toggle']; 
 				if($toggle && strpos($toggle, 'title=') === false) {
 					$toggle = str_replace("class=", "title='" . $this->_('Toggle open/close') . "' class=", $toggle);
@@ -790,7 +963,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * 
 	 */
 	public function ___renderValue() {
-		if(!count($this->children)) return '';
+		if(!count($this->children())) return '';
 		$this->addClass('InputfieldRenderValueMode');
 		$this->set('renderValueMode', true); 
 		$out = $this->render(); 
@@ -818,10 +991,10 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		$collapsed = $inputfield->getSetting('collapsed');
 		$ajaxInputfield = $collapsed == Inputfield::collapsedYesAjax || ($collapsed == Inputfield::collapsedBlankAjax && $inputfield->isEmpty());
 		$ajaxHiddenInput = "<input type='hidden' name='processInputfieldAjax[]' value='$inputfieldID' />";
-		$ajaxID = $this->wire('config')->ajax ? $this->wire('input')->get('renderInputfieldAjax') : '';
+		$ajaxID = $this->wire()->config->ajax ? $this->wire()->input->get('renderInputfieldAjax') : '';
 		$required = $inputfield->getSetting('required');
 		
-		if($ajaxInputfield && (($required && $inputfield->isEmpty()) || !$this->wire('user')->isLoggedin())) {
+		if($ajaxInputfield && (($required && $inputfield->isEmpty()) || !$this->wire()->user->isLoggedin())) {
 			// if an ajax field is empty, and is required, then we don't use ajax render mode
 			// plus, we only allow ajax inputfields for logged-in users
 			$ajaxInputfield = false;
@@ -858,7 +1031,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		
 		if($ajaxInputfield) {
 			
-			if($ajaxID && $ajaxID == $inputfieldID) {
+			if($ajaxID && $ajaxID === $inputfieldID) {
 				// render ajax inputfield
 				$editable = $inputfield->editable();
 				if($renderValueMode || !$editable) {
@@ -903,10 +1076,12 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * 
 	 */
 	protected function renderInputfieldAjaxPlaceholder(Inputfield $inputfield, $renderValueMode) {
-		
+	
+		$input = $this->wire()->input;
+		$sanitizer = $this->wire()->sanitizer;
 		$inputfieldID = $inputfield->attr('id');
-		$url = $this->wire('input')->url();
-		$queryString = $this->wire('input')->queryString();
+		$url = $input->url();
+		$queryString = $input->queryString();
 		
 		if(strpos($queryString, 'renderInputfieldAjax=') !== false) {
 			// in case nested ajax request 
@@ -915,6 +1090,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 		
 		$url .= $queryString ? "?$queryString&" : "?";
 		$url .= "renderInputfieldAjax=$inputfieldID";
+		$url = $sanitizer->entities($url);
 		
 		$out = "<div class='renderInputfieldAjax'><input type='hidden' value='$url' /></div>";
 		
@@ -946,7 +1122,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	
 		if(!$this->children) return $this; 
 
-		foreach($this->children as $key => $child) {
+		foreach($this->children() as $key => $child) {
 			/** @var Inputfield $child */
 
 			// skip over the field if it is not processable
@@ -961,7 +1137,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$child->processInput($input); 
 
 			// check if a value is required and field is empty, trigger an error if so
-			if($child->name && $child->getSetting('required') && $child->isEmpty()) {
+			if($child->attr('name') && $child->getSetting('required') && $child->isEmpty()) {
 				$requiredLabel = $child->getSetting('requiredLabel'); 
 				if(empty($requiredLabel)) $requiredLabel = $this->requiredLabel;
 				$child->error($requiredLabel); 
@@ -995,23 +1171,25 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			Inputfield::collapsedHidden,
 			Inputfield::collapsedLocked,
 			Inputfield::collapsedNoLocked,
+			Inputfield::collapsedBlankLocked,
 			Inputfield::collapsedYesLocked
-			);
+		);
 		$collapsed = (int) $inputfield->getSetting('collapsed');
 		if(in_array($collapsed, $skipTypes)) return false;
 
 		if(in_array($collapsed, array(Inputfield::collapsedYesAjax, Inputfield::collapsedBlankAjax))) {
-			$processAjax = $this->wire('input')->post('processInputfieldAjax');
+			$processAjax = $this->wire()->input->post('processInputfieldAjax');
 			if(is_array($processAjax) && in_array($inputfield->attr('id'), $processAjax)) {
 				// field can be processed (convention used by InputfieldWrapper)
 			} else if($collapsed == Inputfield::collapsedBlankAjax && !$inputfield->isEmpty()) {
 				// field can be processed because it is only collapsed if blank
-			} else if(isset($_SERVER['HTTP_X_FIELDNAME']) && $_SERVER['HTTP_X_FIELDNAME'] == $inputfield->attr('name')) {
+			} else if(isset($_SERVER['HTTP_X_FIELDNAME']) && $_SERVER['HTTP_X_FIELDNAME'] === $inputfield->attr('name')) {
 				// field can be processed (convention used by ajax uploaded file and other ajax types)
 			} else {
 				// field was not rendered via ajax and thus can't be processed
 				return false;
 			}
+			unset($processAjax);
 		}
 
 		// if dependencies aren't in use, we can skip the rest
@@ -1023,7 +1201,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$name = $inputfield->attr('name'); 
 			if(!$name) {
 				$name = $inputfield->attr('id'); 
-				if(!$name) $name = $this->wire('sanitizer')->fieldName($inputfield->getSetting('label')); 
+				if(!$name) $name = $this->wire()->sanitizer->fieldName($inputfield->getSetting('label')); 
 				$inputfield->attr('name', $name); 
 			}
 			$this->delayedChildren[$name] = $inputfield; 
@@ -1043,7 +1221,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function isEmpty() {
 		$empty = true; 
-		foreach($this->children as $child) {
+		foreach($this->children() as $child) {
 			if(!$child->isEmpty()) {
 				$empty = false;
 				break;
@@ -1066,7 +1244,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	public function getEmpty($required = true) {
 		$a = array();
 		static $n = 0;
-		foreach($this->children as $child) {
+		foreach($this->children() as $child) {
 			if($child instanceof InputfieldWrapper) {
 				$a = array_merge($a, $child->getEmpty($required));
 			} else {
@@ -1094,7 +1272,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function getErrors($clear = false) {
 		$errors = parent::getErrors($clear); 
-		foreach($this->children as $key => $child) {
+		foreach($this->children() as $key => $child) {
 			foreach($child->getErrors($clear) as $e) {
 				$label = $child->getSetting('label');
 				$msg = $label ? $label : $child->attr('name'); 
@@ -1138,22 +1316,23 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function child($name = '', $recursive = true) {
 		$child = null;
+		$children = $this->children();
 
-		if(!$this->children->count()) {
+		if(!$children->count()) {
 			// no child possible
 
 		} else if(empty($name)) {
 			// first child
-			$child = $this->children->first();
+			$child = $children->first();
 			
 		} else if(is_int($name)) {
 			// number index
-			$child = $this->children->eq($name);
+			$child = $children->eq($name);
 			
-		} else if($this->wire('sanitizer')->name($name) === $name) {
+		} else if($this->wire()->sanitizer->name($name) === $name) {
 			// child by name
 			$wrappers = array();
-			foreach($this->children as $f) {
+			foreach($children as $f) {
 				if($f->getAttribute('name') === $name) {
 					$child = $f;
 					break;
@@ -1170,7 +1349,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 
 		} else if(Selectors::stringHasSelector($name)) {
 			// first child matching selector string
-			$child = $this->children("$name, limit=1")->first();
+			$child = $children->find("$name, limit=1")->first();
 		}
 		
 		return $child;
@@ -1202,7 +1381,7 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function _getDelayedChildren($clear = false) {
 		$a = $this->delayedChildren; 
-		foreach($this->children as $child) {
+		foreach($this->children() as $child) {
 			if(!$child instanceof InputfieldWrapper) continue; 
 			$a = array_merge($a, $child->_getDelayedChildren($clear)); 
 		}
@@ -1220,11 +1399,13 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 *
 	 */
 	public function find($selector) {
-		return $this->children->find($selector); 
+		return $this->children()->find($selector); 
 	}
 
 	/**
 	 * Given an Inputfield name, return the child Inputfield or NULL if not found.
+	 * 
+	 * This traverses all children recursively to find the requested Inputfield. 
 	 * 
 	 * This is the same as the `InputfieldWrapper::get()` method except that it can
 	 * only return Inputfield or null, and has no crossover with other settings, 
@@ -1233,22 +1414,69 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * #pw-group-retrieval-and-traversal
 	 * 
 	 * @param string $name Name of Inputfield
-	 * @return Inputfield|null
+	 * @return Inputfield|InputfieldWrapper|null
 	 * @see InputfieldWrapper::get(), InputfieldWrapper::children()
 	 *
 	 */
 	public function getChildByName($name) {
-		if(!strlen($name)) return null;
+		return strlen($name) ? $this->getByAttr('name', $name) : null;
+	}
+
+	/**
+	 * Shorter alias of getChildByName()
+	 * 
+	 * #pw-group-retrieval-and-traversal
+	 * 
+	 * @param string $name
+	 * @return Inputfield|null
+	 * @since 3.0.172
+	 * 
+	 */
+	public function getByName($name) {
+		return strlen($name) ? $this->getByAttr('name', $name) : null;
+	}
+
+	/**
+	 * Given an attribute name and value, return the first matching Inputfield or null if not found
+	 * 
+	 * This traverses all children recursively to find the requested Inputfield.
+	 * 
+	 * #pw-group-retrieval-and-traversal
+	 * 
+	 * @param string $attrName Attribute to match, such as 'id', 'name', 'value', etc.
+	 * @param string $attrValue Attribute value to match
+	 * @return Inputfield|null
+	 * @since 3.0.196
+	 * 
+	 */
+	public function getByAttr($attrName, $attrValue) {
 		$inputfield = null;
-		foreach($this->children as $child) {
-			if($child->getAttribute('name') === $name) {
+		foreach($this->children() as $child) {
+			if($child->getAttribute($attrName) === $attrValue) {
 				$inputfield = $child;
 			} else if($child instanceof InputfieldWrapper) {
-				$inputfield = $child->getChildByName($name);
+				$inputfield = $child->getByAttr($attrName, $attrValue);
 			}
 			if($inputfield) break;
 		}
 		return $inputfield;
+	}
+
+	/**
+	 * Get value of Inputfield by name
+	 * 
+	 * This traverses all children recursively to find the requested Inputfield,
+	 * and get the value attribute from it. A value of null is returned if the 
+	 * Inputfield cannot be found. 
+	 * 
+	 * @param string $name
+	 * @return string|int|float|bool|array|object|null
+	 * @since 3.0.172
+	 * 
+	 */
+	public function getValueByName($name) {
+		$inputfield = $this->getByName($name);
+		return $inputfield ? $inputfield->val() : null;
 	}
 
 	/**
@@ -1261,8 +1489,9 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * @return InputfieldsArray
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
-		return $this->children; 
+		return $this->children(); 
 	}
 
 	/**
@@ -1273,8 +1502,9 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * @return int
 	 *
 	 */
+	#[\ReturnTypeWillChange] 
 	public function count() {
-		return count($this->children);
+		return count($this->children());
 	}
 
 	/**
@@ -1284,14 +1514,18 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 * 
 	 * #pw-group-retrieval-and-traversal
  	 *  
-	 * @return InputfieldWrapper
+	 * @param array $options Options to modify behavior (3.0.169+)
+	 *  - `withWrappers` (bool): Also include InputfieldWrapper objects? (default=false) 3.0.169+
+	 * @return InputfieldWrapper|InputfieldsArray
 	 *
 	 */
-	public function getAll() {
+	public function getAll(array $options = array()) {
+		/** @var InputfieldsArray $all */
 		$all = $this->wire(new InputfieldsArray());
-		foreach($this->children as $child) {
+		foreach($this->children() as $child) {
 			if($child instanceof InputfieldWrapper) {
-				foreach($child->getAll() as $c) {
+				if(!empty($options['withWrappers'])) $all->add($child);
+				foreach($child->getAll($options) as $c) {
 					$all->add($c); 
 				}
 			} else {
@@ -1311,7 +1545,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 *
 	 */
 	public function setTrackChanges($trackChanges = true) {
-		if(count($this->children)) foreach($this->children as $child) $child->setTrackChanges($trackChanges); 
+		$children = $this->children();
+		if(count($children)) foreach($children as $child) $child->setTrackChanges($trackChanges); 
 		return parent::setTrackChanges($trackChanges); 
 	}
 
@@ -1325,7 +1560,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 *
 	 */
 	public function resetTrackChanges($trackChanges = true) {
-		if(count($this->children)) foreach($this->children as $child) $child->resetTrackChanges($trackChanges); 
+		$children = $this->children();
+		if(count($children)) foreach($children as $child) $child->resetTrackChanges($trackChanges); 
 		return parent::resetTrackChanges($trackChanges);
 	}
 
@@ -1341,11 +1577,14 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 
 		$inputfields = parent::___getConfigInputfields();
 
-		// remove all options for 'collapsed' except collapsedYes and collapsedNo
-		foreach($inputfields as $f) {
-			if($f->attr('name') != 'collapsed') continue; 
+		/** @var InputfieldSelect $f */
+		$f = $inputfields->getChildByName('collapsed');
+		if($f) {
+			// remove all options for 'collapsed' except collapsedYes and collapsedNo
 			foreach($f->getOptions() as $value => $label) {
-				if(!in_array($value, array(Inputfield::collapsedNo, Inputfield::collapsedYes))) $f->removeOption($value); 
+				if(!in_array($value, array(Inputfield::collapsedNo, Inputfield::collapsedYes))) {
+					$f->removeOption($value);
+				}
 			}
 		}
 
@@ -1456,6 +1695,8 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 	 */
 	public function importArray(array $a, InputfieldWrapper $inputfields = null) {
 		
+		$modules = $this->wire()->modules;
+		
 		if(is_null($inputfields)) $inputfields = $this; 
 		if(!count($a)) return $inputfields;
 	
@@ -1478,7 +1719,9 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$type = $info['type'];
 			unset($info['type']);
 			if(strpos($type, 'Inputfield') !== 0) $type = "Inputfield" . ucfirst($type);
-			$f = $this->wire('modules')->get($type);
+			
+			/** @var Inputfield $f */
+			$f = $modules->get($type);
 
 			if(!$f) {
 				$this->error("Skipped field '$name' because module '$type' does not exist");
@@ -1487,8 +1730,9 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			
 			$f->attr('name', $name);
 			
-			if($type == 'InputfieldCheckbox') {
+			if($type === 'InputfieldCheckbox') {
 				// checkbox behaves a little differently, just like in HTML
+				/** @var InputfieldCheckbox $f */
 				if(!empty($info['attr']['value'])) {
 					$f->attr('value', $info['attr']['value']);
 				} else if(!empty($info['value'])) {
@@ -1583,6 +1827,20 @@ class InputfieldWrapper extends Inputfield implements \Countable, \IteratorAggre
 			$a[] = $info;
 		}
 		return $a;
+	}
+
+	/**
+	 * Debug info
+	 * 
+	 * #pw-internal
+	 * 
+	 * @return array
+	 * 
+	 */
+	public function __debugInfo() {
+		$info = parent::__debugInfo();
+		$info['children'] = $this->debugMap();
+		return $info;
 	}
 	
 }

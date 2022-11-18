@@ -324,7 +324,7 @@ class WireCache extends Wire {
 	 * @param int|string|null $expire
 	 * @param callable $func
 	 * @return bool|string
-	 * @since Version 2.5.28
+	 * @since 2.5.28
 	 * 
 	 */
 	protected function renderCacheValue($name, $expire, $func) {
@@ -341,15 +341,17 @@ class WireCache extends Wire {
 		}
 
 		ob_start();
-		
-		if(count($args)) {
-			$value = call_user_func_array($func, $args);
-		} else {
-			$value = $func();
+	
+		try {
+			if(count($args)) {
+				$value = call_user_func_array($func, $args);
+			} else {
+				$value = $func();
+			}
+		} finally { // PHP 5.5+
+			$out = ob_get_contents();
+			ob_end_clean();
 		}
-		
-		$out = ob_get_contents();
-		ob_end_clean();
 		
 		if(empty($value) && !empty($out)) $value = $out; 
 
@@ -449,8 +451,8 @@ class WireCache extends Wire {
 			$data = json_encode($data);
 			if($data === false) throw new WireException("Unable to encode array data for cache: $name"); 
 		} else if(is_string($data) && $this->looksLikeJSON($data)) {
-			// ensure potentailly already encoded JSON text remains as text when cache is awakened
-			$data = array('WireCache' => $data); 
+			// ensure potentially already encoded JSON text remains as text when cache is awakened
+			$data = json_encode(array('WireCache' => $data)); 
 		}
 		
 		if(is_null($data)) $data = '';
@@ -525,7 +527,7 @@ class WireCache extends Wire {
 
 			if($expire instanceof Page) {
 				// page object
-				$expire = $expire->template->id;
+				$expire = $expire->templates_id;
 
 			} else if($expire instanceof Template) {
 				// template object
@@ -716,15 +718,22 @@ class WireCache extends Wire {
 	public function maintenance($obj = null) {
 		
 		static $done = false;
+		
 		$forceRun = false;
+		$database = $this->wire()->database;
+		$config = $this->wire()->config;
+		
+		if(!$database || !$config) return false;
 		
 		if(is_object($obj)) {
 		
 			// check to see if it is worthwhile to perform this kind of maintenance at all
 			if(is_null($this->usePageTemplateMaintenance)) {
+				$templates = $this->wire()->templates;
+				if(!$templates) $templates = array();
 				$minID = 999999;
 				$maxID = 0;
-				foreach($this->wire('templates') as $template) {
+				foreach($templates as $template) {
 					if($template->id > $maxID) $maxID = $template->id;
 					if($template->id < $minID) $minID = $template->id;
 				}
@@ -733,7 +742,7 @@ class WireCache extends Wire {
 					"WHERE (expires=:expireSave OR expires=:expireSelector) " . 
 					"OR (expires>=:minID AND expires<=:maxID)";
 				
-				$query = $this->wire('database')->prepare($sql);
+				$query = $database->prepare($sql);
 				$query->bindValue(':expireSave', self::expireSave);
 				$query->bindValue(':expireSelector', self::expireSelector);
 				$query->bindValue(':minID', date(self::dateFormat, $minID));
@@ -764,7 +773,7 @@ class WireCache extends Wire {
 		}
 		
 		// don't perform general maintenance during ajax requests
-		if($this->wire('config')->ajax && !$forceRun) return false;
+		if($config->ajax && !$forceRun) return false;
 
 		// perform general maintenance now	
 		return $this->maintenanceGeneral();
@@ -777,10 +786,11 @@ class WireCache extends Wire {
 	 * 
 	 */
 	protected function maintenanceGeneral() {
+	
+		$database = $this->wire()->database;
 		
 		$sql = 'DELETE FROM caches WHERE (expires<=:now AND expires>:never) ';
-
-		$query = $this->wire('database')->prepare($sql, "cache.maintenance()");
+		$query = $database->prepare($sql, "cache.maintenance()");
 		$query->bindValue(':now', date(self::dateFormat, time()));
 		$query->bindValue(':never', self::expireNever);
 
@@ -808,11 +818,13 @@ class WireCache extends Wire {
 	 */
 	protected function maintenancePage(Page $page) {
 		
+		$database = $this->wire()->database;
+		
 		if(is_null($this->cacheNameSelectors)) {
 			// locate all caches that specify selector strings and cache them so that 
 			// we don't have to re-load them on every page save
 			try {
-				$query = $this->wire('database')->prepare("SELECT * FROM caches WHERE expires=:expire");
+				$query = $database->prepare("SELECT * FROM caches WHERE expires=:expire");
 				$query->bindValue(':expire', self::expireSelector);
 				$query->execute();
 				$this->cacheNameSelectors = array();
@@ -853,7 +865,7 @@ class WireCache extends Wire {
 			$sql .= "OR name=:$key ";
 		}
 	
-		$query = $this->wire('database')->prepare("DELETE FROM caches WHERE $sql");
+		$query = $database->prepare("DELETE FROM caches WHERE $sql");
 	
 		// bind values
 		$query->bindValue(':expireSave', self::expireSave); 
@@ -880,7 +892,7 @@ class WireCache extends Wire {
 	protected function maintenanceTemplate(Template $template) {
 		
 		$sql = 'DELETE FROM caches WHERE expires=:expireTemplateID OR expires=:expireSave';
-		$query = $this->wire('database')->prepare($sql);
+		$query = $this->wire()->database->prepare($sql);
 
 		$query->bindValue(':expireSave', self::expireSave);
 		$query->bindValue(':expireTemplateID', date(self::dateFormat, $template->id));
@@ -897,7 +909,7 @@ class WireCache extends Wire {
 	 *
 	 * @param array $data
 	 * @return PageArray
-	 * @since Version 2.5.28
+	 * @since 2.5.28
 	 *
 	 */
 	protected function arrayToPageArray(array $data) {
@@ -924,7 +936,7 @@ class WireCache extends Wire {
 	 * @param PageArray $items
 	 * @return array
 	 * @throws WireException
-	 * @since Version 2.5.28
+	 * @since 2.5.28
 	 *
 	 */
 	protected function pageArrayToArray(PageArray $items) {
@@ -971,6 +983,9 @@ class WireCache extends Wire {
 	 */
 	public function getInfo($verbose = true, $names = array(), $exclude = array()) {
 		
+		$templates = $this->wire()->templates;
+		$database = $this->wire()->database;
+		
 		if(is_string($names)) $names = empty($names) ? array() : array($names);
 		if(is_string($exclude)) $exclude = empty($exclude) ? array() : array($exclude);
 		
@@ -999,7 +1014,7 @@ class WireCache extends Wire {
 			$sql .= "WHERE " . implode(' AND ', $wheres);
 		}
 		
-		$query = $this->wire('database')->prepare($sql);
+		$query = $database->prepare($sql);
 		
 		foreach($binds as $key => $val) {
 			$query->bindValue($key, $val);
@@ -1038,20 +1053,20 @@ class WireCache extends Wire {
 			}
 			
 			if(empty($info['expires'])) {
-				if($row['expires'] == self::expireNever) {
+				if($row['expires'] === self::expireNever) {
 					$info['expires'] = $verbose ? 'never' : '';
-				} else if($row['expires'] == self::expireReserved) {
+				} else if($row['expires'] === self::expireReserved) {
 					$info['expires'] = $verbose ? 'reserved' : '';
-				} else if($row['expires'] == self::expireSave) {
+				} else if($row['expires'] === self::expireSave) {
 					$info['expires'] = $verbose ? 'when any page or template is modified' : 'save';
-				} else if($row['expires'] < time()) {
-					$t = strtotime($row['expires']); 
-					foreach($this->wire('templates') as $template) {
-						if($template->id == $t) {
-							$info['expires'] = $verbose ? "when '$template->name' page or template is modified" : 'save';
-							$info['template'] = $template->id;
-							break;
-						}
+				} else if($row['expires'] < self::expireSave) {
+					// potential template ID encoded as date string
+					$templateId = strtotime($row['expires']); 
+					$template = $templates->get($templateId);
+					if($template) {
+						$info['expires'] = $verbose ? "when '$template->name' page or template is modified" : 'save';
+						$info['template'] = $template->id;
+						break;
 					}
 				}
 				if(empty($info['expires'])) {

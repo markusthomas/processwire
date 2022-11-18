@@ -57,9 +57,15 @@ function setupLanguageTabs($form) {
 			$parent.prev('.InputfieldHeader').append($span);
 		}
 		
-		var $links = $this.find('a');
+		var $links = $this.find('a.langTabLink');
 		var timeout = null;
 		var $note = $parent.find('.langTabsNote');
+		
+		if(!$links.length) {
+			$links = $this.find('a[data-lang]'); // fallback if missing langTabLink class
+			if(!$links.length) $links = $this.find('a');
+			$links.addClass('langTabLink');
+		}
 		
 		$links.on('mouseover', function() {
 			if(timeout) clearTimeout(timeout);
@@ -79,9 +85,14 @@ function setupLanguageTabs($form) {
 			} else {
 				$closeItem.removeClass('LanguageSupportCurrent');
 				$openItem.addClass('LanguageSupportCurrent');
+				$a.trigger('clicklangtab', [ $openItem, $closeItem ]);
 			}
-			// uikit tab (beta 34+) also requires a click on the <li> element
-			if($a.closest('ul.uk-tab').length) $a.closest('li').click();
+			// uikit tab also requires the following
+			var $ukTab = $a.closest('ul.uk-tab');
+			if($ukTab.length) {
+				$ukTab.find('.uk-active').removeClass('uk-active');
+				$a.closest('li').addClass('uk-active');
+			}
 		}); 
 		
 		if(!cfg.jQueryUI) {
@@ -177,11 +188,14 @@ function unhideLanguageTabs() {
  * document.ready
  * 
  */
-jQuery(document).ready(function() { 
+jQuery(document).ready(function($) { 
 	$(document).on('click', '.langTabsToggle', toggleLanguageTabs);
-	$(document).on('dblclicklangtab', '.langTabs a', dblclickLanguageTab);
+	$(document).on('dblclicklangtab', 'a.langTabLink', dblclickLanguageTab);
 	$(document).on('reloaded', '.Inputfield', function() {
-		setupLanguageTabs($(this));
+		var $inputfield = $(this);
+		setTimeout(function() {
+			setupLanguageTabs($inputfield);
+		}, 100);
 	});
 	$(document).on('AjaxUploadDone', '.InputfieldHasFileList .InputfieldFileList', function() {
 		setupLanguageTabs($(this));

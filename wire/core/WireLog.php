@@ -259,10 +259,24 @@ class WireLog extends Wire {
 	 * 
 	 */
 	public function getFilename($name) {
+		$name = strtolower($name); 
 		if($name !== $this->wire('sanitizer')->pageName($name)) {
 			throw new WireException("Log name must contain only [-_.a-z0-9] with no extension");
 		}
 		return $this->wire('config')->paths->logs . $name . '.' . $this->logExtension;
+	}
+
+	/**
+	 * Does given log name exist?
+	 * 
+	 * @param string $name
+	 * @return bool
+	 * @since 3.0.176
+	 * 
+	 */
+	public function exists($name) {
+		$filename = $this->getFilename($name);
+		return is_file($filename);
 	}
 
 	/**
@@ -446,8 +460,10 @@ class WireLog extends Wire {
 	 *
 	 */
 	public function delete($name) {
+		if(!$this->exists($name)) return false;
 		$log = $this->getFileLog($name);
-		return $log->delete();
+		if($log) return $log->delete();
+		return false;
 	}
 
 	/**
@@ -462,6 +478,7 @@ class WireLog extends Wire {
 	 * 
 	 */
 	public function prune($name, $days) {
+		if(!$this->exists($name)) return false;
 		$log = $this->getFileLog($name);
 		if($days < 1) throw new WireException("Prune days must be 1 or more"); 
 		$oldestDate = strtotime("-$days DAYS"); 

@@ -352,6 +352,7 @@ var ProcessWireAdminTheme = {
 				close: function(event, ui) {
 				},
 				source: function(request, response) {
+					if(request.term === $input.attr('data-help-term')) request.term = 'help';
 					var url = $input.parents('form').attr('data-action') + '?q=' + request.term;
 					$.getJSON(url, function(data) {
 						var len = data.matches.length;
@@ -394,7 +395,9 @@ var ProcessWireAdminTheme = {
 				}
 			}).focus(function() {
 				// $(this).siblings('label').find('i').hide(); // hide icon
+				setTimeout(function() { $input.attr('placeholder', $input.attr('data-help-note')); }, 1250); 
 			}).blur(function() {
+				$input.attr('placeholder', '');
 				// $status.text('');
 				// $(this).siblings('label').find('i').show(); // show icon
 			});
@@ -434,17 +437,17 @@ var ProcessWireAdminTheme = {
 				var $li = $("<li></li>").addClass('pw-nav-dup').append($a2);
 				$ul.append($li);
 				if(data.add) {
-					var $li = $(
+					var $li2 = $(
 						"<li class='pw-nav-add'>" +
 						"<a href='" + data.url + data.add.url + "'>" +
 						"<i class='fa fa-fw fa-" + data.add.icon + " pw-nav-icon'></i>" +
 						data.add.label + "</a>" +
 						"</li>"
 					);
-					$ul.append($li);
+					$ul.append($li2);
 				}
 				// populate the retrieved items
-				$.each(data.list, function(n) {
+				$.each(data.list, function(i) {
 					if(this.label.indexOf('<span') > -1) {
 						// Uikit beta 34 does not like span elements in the label for some reason
 						this.label = this.label.replace(/<\/?span[^>]*>/g, '');
@@ -837,6 +840,7 @@ var ProcessWireAdminTheme = {
 		}); 
 
 		$('body').addClass('InputfieldColumnWidthsInit');
+		Inputfields.toggleBehavior = ProcessWire.config.adminTheme.toggleBehavior;
 		initFormMarkup();
 	},
 

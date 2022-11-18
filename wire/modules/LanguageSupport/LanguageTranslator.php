@@ -170,7 +170,24 @@ class LanguageTranslator extends Wire {
 		} else {
 
 			$reflection = new \ReflectionClass($o); 	
-			$filename = $reflection->getFileName(); 		
+			$filename = $reflection->getFileName();
+		
+			if($o instanceof Module) {
+				$ds = \DIRECTORY_SEPARATOR; 
+				if(strpos($filename, "{$ds}wire{$ds}modules{$ds}") === false) {
+					// not a core module
+					$config = $this->wire()->config;
+					$filename = $this->wire()->files->unixFileName($filename);
+					$url = $config->urls($o);
+					if($url && strpos($filename, $url) === false && strpos($filename, "/$class/") !== false) {
+						// module likely in a symbolic link directory, so determine our own path for textdomain
+						// rather than using the one provided by ReflectionClass
+						list(, $filename) = explode("/$class/", $filename, 2);
+						$filename = $config->paths($class) . $filename;
+					}
+				}
+			}
+			
 			$textdomain = $this->filenameToTextdomain($filename); 
 			$this->classNamesToTextdomains[$class] = $textdomain;
 			$parentTextdomains = array();
@@ -257,9 +274,10 @@ class LanguageTranslator extends Wire {
 	 *
 	 * @param string|object $textdomain
 	 * @return string
+	 * @since 3.0.154 was protected in prior versions
 	 *
 	 */
-	protected function textdomainString($textdomain) {
+	public function textdomainString($textdomain) {
 
 		if(is_string($textdomain) && (strpos($textdomain, DIRECTORY_SEPARATOR) !== false || strpos($textdomain, '/') !== false)) {
 			$textdomain = $this->filenameToTextdomain($textdomain); // @werker #424
@@ -285,7 +303,7 @@ class LanguageTranslator extends Wire {
 	 *
 	 */
 	public function getTranslation($textdomain, $text, $context = '') {
-		if($this->wire('hooks')->isHooked('LanguageTranslator::getTranslation()')) {
+		if($this->wire()->hooks->isHooked('LanguageTranslator::getTranslation()')) {
 			// if method has hooks, we let them run
 			return $this->__call('getTranslation', array($textdomain, $text, $context));
 		} else { 
@@ -449,6 +467,7 @@ class LanguageTranslator extends Wire {
 	 *
 	 */
 	protected function getTextHash($text) {
+		if(strpos($text, '\\n') !== false) $text = str_replace('\\n', "\n", $text);
 		return md5($text); 
 	}
 
@@ -473,7 +492,7 @@ class LanguageTranslator extends Wire {
 	 */
 	public function textdomainFileExists($textdomain) {
 		$file = $this->getTextdomainTranslationFile($textdomain);
-		return is_file($file);
+		return file_exists($file);
 	}
 
 	/**
@@ -579,15 +598,15 @@ class LanguageTranslator extends Wire {
 	/**
 	 * JSON encode language translation data
 	 * 
-	 * @param string $str
+	 * @param array|string $value
 	 * @return string
 	 *
 	 */
-	public function encodeJSON($str) {
+	public function encodeJSON($value) {
 		if(defined("JSON_PRETTY_PRINT")) {
-			return json_encode($str, JSON_PRETTY_PRINT); 
+			return json_encode($value, JSON_PRETTY_PRINT); 
 		} else {
-			return json_encode($str); 
+			return json_encode($value); 
 		}
 	}
 

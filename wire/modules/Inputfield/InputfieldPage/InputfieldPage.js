@@ -118,11 +118,17 @@ function initInputfieldPageDependentSelects($inputfieldPage) {
 	function initSelector($t) {
 		var selector = $t.val();
 
+		var selectorHasPage = selector.indexOf('=page.') > -1; // 'page' refers to page being edited
+		var selectorHasItem = selector.indexOf('=item.') > -1; // 'item' refers to repeater item
+		
 		// if there is no "=page." present in the selector, then this can't be a dependent select
-		if(selector.indexOf('=page.') == -1) return;
+		if(!selectorHasPage && !selectorHasItem) return;
+		
+		if(selectorHasItem) selector = selector.replaceAll('=item.', '=page.');
 
 		var labelFieldName = $t.attr('data-label');
 		var formatName = $t.attr('data-formatname');
+		var $repeaterItems = $t.parents('.InputfieldRepeaterItem');
 
 		if(!labelFieldName.length) $labelFieldName = 'name';
 
@@ -137,7 +143,18 @@ function initInputfieldPageDependentSelects($inputfieldPage) {
 
 			var part = parts[n]; // page matching part of the selector
 			var name = part.replace('=page.', '');
-			var $select1 = $('#Inputfield_' + name);
+			var $select1 = $('#Inputfield_' + name); // see if available in page editor
+			
+			if((!$select1.length || selectorHasItem) && $repeaterItems.length) {
+				// if not available in page editor, or we are in a repeater, 
+				// see if available in any of the repeaters we are nested within
+				var $selectInRepeater = '';
+				$repeaterItems.each(function() {		
+					if($selectInRepeater.length) return;
+					$selectInRepeater = $('#Inputfield_' + name + '_repeater' + $(this).attr('data-page'));
+				});
+				if($selectInRepeater.length) $select1 = $selectInRepeater;
+			}
 
 			if($select1.length < 1) continue;
 

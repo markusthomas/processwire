@@ -57,7 +57,7 @@ var ProcessLister = {
 		}); 
 
 		$("#ProcessListerActionsForm").find('script').remove(); // to prevent from running twice after being WireTabbed
-		if(ProcessLister.lister.size() > 0) ProcessLister.lister.WireTabs({ items: $(".WireTab") });
+		if(ProcessLister.lister.length > 0) ProcessLister.lister.WireTabs({ items: $(".WireTab") });
 
 
 		$("#_ProcessListerRefreshTab").html("<i class='fa fa-fw fa-refresh ui-priority-secondary'></i>")
@@ -114,13 +114,17 @@ var ProcessLister = {
 	 *
 	 */
 	columnSort: function() {
-		$(this).find("span").remove();
-		var name = $(this).find('b').text();
+		
+		if($(this).hasClass('not_sortable')) return false;
+		$(this).find('span').remove();
+		
+		var $b = $(this).find('b');
+		var name = $b.text();
 		var val = $("#lister_sort").val();
 
 		if(val == name) name = '-' + name; // reverse
 		if(name.length < 1) name = val;
-		$("#lister_sort").val(name);
+		$('#lister_sort').val(name);
 
 		ProcessLister.submit();
 	},

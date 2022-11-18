@@ -10,7 +10,7 @@
  * This file is licensed under the MIT license
  * https://processwire.com/about/license/mit/
  * 
- * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  * 
  * @property ProcessWire $wire
@@ -77,8 +77,9 @@ class Fuel implements \IteratorAggregate {
 	 * 
 	 */
 	static protected $commonNames = array(
-		'page' => 1, 'pages' => 1, 'session' => 1, 'input' => 1, 'sanitizer' => 1, 'config' => 1, 
-		'user' => 1, 'users' => 1, 'fields' => 1, 'templates' => 1, 'database' => 1, 'modules' => 1,
+		'page' => 1, 'pages' => 1, 'session' => 1, 'input' => 1, 'sanitizer' => 1, 
+		'config' => 1, 'user' => 1, 'users' => 1, 'fields' => 1, 'templates' => 1, 
+		'database' => 1, 'modules' => 1, 'hooks' => 1,
 	);
 	
 	/**
@@ -129,6 +130,7 @@ class Fuel implements \IteratorAggregate {
 		return isset($this->data[$key]) ? $this->data[$key] : null;
 	}
 
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		return new \ArrayObject($this->data); 
 	}

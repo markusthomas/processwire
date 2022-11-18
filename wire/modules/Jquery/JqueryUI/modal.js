@@ -121,22 +121,53 @@ function pwModalWindowSettings(name) {
 				.css('padding-top', 0)
 				.prepend("<i class='fa fa-times'></i>")
 				.find('.ui-icon').remove();
-			
-			if(frameElement && parent.jQuery != "undefined" && parent.jQuery('.ui-dialog').length) {
+			if(frameElement) {
 				// dialog on top of dialog
-				parent.jQuery('.ui-dialog .ui-button').addClass('pw-modal-hidden').hide();
-				parent.jQuery('.ui-dialog-buttonpane').css('margin-top', '-10px');
-				jQuery('body').css('overflow', 'hidden');
+				if(typeof parent.jQuery !== 'undefined') {
+					// jQuery available in parent
+					if(parent.jQuery('.ui-dialog').length) {
+						parent.jQuery('.ui-dialog .ui-button').addClass('pw-modal-hidden').hide();
+						parent.jQuery('.ui-dialog-buttonpane').css('margin-top', '-10px');
+						jQuery('body').css('overflow', 'hidden');
+					}
+				} else {
+					// jQuery NOT available in parent
+					if(parent.document.querySelector('.ui-dialog')) {
+						var parentButtons = parent.document.querySelectorAll('.ui-dialog .ui-button');
+						var i;
+						for(i = 0; i < parentButtons.length; i++) {
+							parentButtons[i].classList.add('pw-modal-hidden');
+							parentButtons[i].style.display = 'none';
+						}
+						var parentPanes = parent.document.querySelectorAll('.ui-dialog-buttonpane');
+						for(i = 0; i < parentPanes.length; i++) {
+							parentPanes[i].style.marginTop = '-10px';
+						}
+						document.querySelector('body').style.overflow = 'hidden';
+					}
+				}
 			}
 		},
 		beforeClose: function(event, ui) {
-			if(parent.jQuery != "undefined" && parent.jQuery('.ui-dialog').length) {
+			if(typeof parent.jQuery != 'undefined') { 
+				if(parent.jQuery('.ui-dialog').length) {
+					if(frameElement) {
+						// dialog on top of another dialog
+						parent.jQuery('.pw-modal-hidden').show();
+						jQuery('body').css('overflow', '');
+					} else if(options.hideOverflow) {
+						parent.jQuery('body').css('overflow', '');
+					}
+				}
+			} else {
+				// no jQuery available
 				if(frameElement) {
 					// dialog on top of another dialog
-					parent.jQuery(".pw-modal-hidden").show();
-					jQuery('body').css('overflow', '');
+					var parentModalHidden = parent.document.querySelector('.pw-modal-hidden');
+					if(parentModalHidden) parentModalHidden.style.display = 'block';
+					document.querySelector('body').style.overflow = '';
 				} else if(options.hideOverflow) {
-					parent.jQuery('body').css('overflow', '');
+					parent.document.querySelector('body').style.overflow = '';
 				}
 			}
 		}
@@ -154,9 +185,11 @@ function pwModalWindowSettings(name) {
  */
 function pwModalWindow(href, options, size) {
 	
+	var $iframe, url;
+	
 	// destory any existing pw-modals that aren't currently open
 	for(var n = 0; n <= pwModalWindows.length; n++) {
-		var $iframe = pwModalWindows[n]; 	
+		$iframe = pwModalWindows[n]; 	
 		if($iframe == null) continue; 
 		if($iframe.dialog('isOpen')) continue;
 		$iframe.dialog('destroy').remove();
@@ -164,15 +197,15 @@ function pwModalWindow(href, options, size) {
 	}
 
 	if(href.indexOf('modal=') > 0) {
-		var url = href; 
+		url = href; 
 	} else {
-		var url = href + (href.indexOf('?') > -1 ? '&' : '?') + 'modal=1';
+		url = href + (href.indexOf('?') > -1 ? '&' : '?') + 'modal=1';
 	}
-	var $iframe = jQuery('<iframe class="pw-modal-window" frameborder="0" src="' + url + '"></iframe>');
+	$iframe = jQuery('<iframe class="pw-modal-window" frameborder="0" src="' + url + '"></iframe>');
 	$iframe.attr('id', 'pw-modal-window-' + (pwModalWindows.length+1));
 	pwModalWindows[pwModalWindows.length] = $iframe;
 	
-	if(typeof size == "undefined" || size.length == 0) var size = 'large';
+	if(typeof size == "undefined" || size.length == 0) size = 'large';
 	var settings = pwModalWindowSettings(size);
 	
 	if(settings == null) {
@@ -205,7 +238,7 @@ function pwModalWindow(href, options, size) {
 	function updateWindowSize() {
 		var width = jQuery(window).width();
 		var height = jQuery(window).height();
-		if(width == lastWidth && height == lastHeight) return;
+		if((width == lastWidth && height == lastHeight) || !$iframe.hasClass('ui-dialog-content')) return;
 		var _size = size;
 		if(width <= 960 && size != 'full' && size != 'large') _size = 'large';
 		if(width <= 700 && size != 'full') _size = 'full';
@@ -237,7 +270,7 @@ function pwModalWindow(href, options, size) {
 		$iframe.refresh();
 	};
 	$iframe.setTitle = function(title) {
-		$iframe.dialog('option', 'title', title); 
+		$iframe.dialog('option', 'title', jQuery('<textarea />').text(title).html()); 
 	}; 
 
 	return $iframe; 

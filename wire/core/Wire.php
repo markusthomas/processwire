@@ -5,11 +5,11 @@
  * 
  * #pw-summary Wire is the base class for most ProcessWire classes and modules. 
  * #pw-body = 
- * Wire derived classes have a `$this->wire()` method that provides access to ProcessWire's API variables.
+ * Wire derived classes have a `$this->wire()` method that provides access to ProcessWire’s API variables.
  * API variables can also be accessed as local properties in most cases. Wire also provides basic methods 
  * for tracking changes and managing runtime notices specific to the instance. 
  * 
- * Wire derived classes can specify which methods are "hookable" by precending the method name with 
+ * Wire derived classes can specify which methods are “hookable” by precending the method name with 
  * 3 underscores like this: `___myMethod()`. Other classes can then hook either before or after that method, 
  * modifying arguments or return values. Several other hook methods are also provided for Wire derived 
  * classes that are hooking into others. 
@@ -19,70 +19,80 @@
  * #pw-summary-changes Methods to support tracking and retrieval of changes made to the object.
  * #pw-summary-hooks Methods for managing hooks for an object instance or class. 
  * 
- * ProcessWire 3.x, Copyright 2017 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2022 by Ryan Cramer
  * https://processwire.com
  * 
  * #pw-use-constants
  * 
  * @property string $className #pw-internal
- * @property ProcessWire $wire #pw-internal
- * @property Database $db #pw-internal
+ * 
+ * API variables accessible as properties (unless $useFuel has been set to false):
+ * 
+ * @property AdminTheme|AdminThemeFramework|null $adminTheme #pw-internal
+ * @property WireCache $cache #pw-internal
+ * @property Config $config #pw-internal
  * @property WireDatabasePDO $database #pw-internal
- * @property Session $session  #pw-internal
- * @property Notices $notices #pw-internal
- * @property Sanitizer $sanitizer #pw-internal
+ * @property Database $db #pw-internal deprecated
+ * @property WireDateTime $datetime #pw-internal
+ * @property Fieldgroups $fieldgroups #pw-internal
  * @property Fields $fields #pw-internal
  * @property Fieldtypes $fieldtypes #pw-internal
- * @property Fieldgroups $fieldgroups #pw-internal
- * @property Templates $templates #pw-internal
- * @property Pages $pages #pw-internal
- * @property Page $page #pw-internal
- * @property Process $process #pw-internal
- * @property Modules $modules #pw-internal
- * @property Permissions $permissions #pw-internal
- * @property Roles $roles #pw-internal
- * @property Users $users #pw-internal
- * @property User $user #pw-internal
- * @property WireCache $cache #pw-internal
- * @property WireInput $input #pw-internal
- * @property Languages $languages If LanguageSupport installed #pw-internal
- * @property Config $config #pw-internal
+ * @property WireFileTools $files #pw-internal
  * @property Fuel $fuel #pw-internal
  * @property WireHooks $hooks #pw-internal
- * @property WireDateTime $datetime #pw-internal
+ * @property WireInput $input #pw-internal
+ * @property Languages $languages (present only if LanguageSupport installed) #pw-internal
+ * @property WireLog $log #pw-internal
  * @property WireMailTools $mail #pw-internal
- * @property WireFileTools $files #pw-internal
+ * @property Modules $modules #pw-internal
+ * @property Notices $notices #pw-internal
+ * @property Page $page #pw-internal
+ * @property Pages $pages #pw-internal
+ * @property Permissions $permissions #pw-internal
+ * @property Process|ProcessPageView $process #pw-internal
+ * @property WireProfilerInterface $profiler #pw-internal
+ * @property Roles $roles #pw-internal
+ * @property Sanitizer $sanitizer #pw-internal
+ * @property Session $session #pw-internal
+ * @property Templates $templates #pw-internal
+ * @property Paths $urls #pw-internal
+ * @property User $user #pw-internal
+ * @property Users $users #pw-internal
+ * @property ProcessWire $wire #pw-internal
+ * 
+ * The following map API variables to function names and apply only if another function in the class does not 
+ * already have the same name, which would override. All defined API variables can be accessed as functions 
+ * that return the API variable, whether documented below or not. 
+ *
+ * @method WireCache|string|array|PageArray|null cache($name = '', $expire = null, $func = null) Access the $cache API variable as a function.  #pw-group-api-helpers
+ * @method Config|mixed config($key = '', $value = null) Access the $config API variable as a function. #pw-group-api-helpers
+ * @method WireDatabasePDO database() Access the $database API variable as a function.  #pw-group-api-helpers
+ * @method WireDateTime|string|int datetime($format = '', $value = '') Access the $datetime API variable as a function.  #pw-group-api-helpers
+ * @method Field|Fields|null fields($name = '') Access the $fields API variable as a function.  #pw-group-api-helpers
+ * @method WireFileTools files() Access the $files API variable as a function.  #pw-group-api-helpers
+ * @method WireInput|WireInputData|WireInputDataCookie|array|string|int|null input($type = '', $key = '', $sanitizer = '') Access the $input API variable as a function.  #pw-group-api-helpers
+ * @method WireInputDataCookie|string|int|array|null inputCookie($key = '', $sanitizer = '') Access the $input->cookie() API variable as a function.  #pw-group-api-helpers
+ * @method WireInputData|string|int|array|null inputGet($key = '', $sanitizer = '') Access the $input->get() API variable as a function.  #pw-group-api-helpers
+ * @method WireInputData|string|int|array|null inputPost($key = '', $sanitizer = '') Access the $input->post() API variable as a function.  #pw-group-api-helpers
+ * @method Languages|Language|NullPage|null languages($name = '') Access the $languages API variable as a function.  #pw-group-api-helpers
+ * @method Modules|Module|ConfigurableModule|null modules($name = '') Access the $modules API variable as a function. #pw-group-api-helpers
+ * @method Page|Mixed page($key = '', $value = null) Access the $page API variable as a function. #pw-group-api-helpers
+ * @method Pages|PageArray|Page|NullPage pages($selector = '') Access the $pages API variable as a function. #pw-group-api-helpers
+ * @method Permissions|Permission|PageArray|null|NullPage permissions($selector = '') Access the $permissions API variable as a function.  #pw-group-api-helpers
+ * @method Roles|Role|PageArray|null|NullPage roles($selector = '') Access the $roles API variable as a function.  #pw-group-api-helpers
+ * @method Sanitizer|string|int|array|null|mixed sanitizer($name = '', $value = '') Access the $sanitizer API variable as a function.  #pw-group-api-helpers
+ * @method Session|mixed session($key = '', $value = null) Access the $session API variable as a function.  #pw-group-api-helpers
+ * @method Templates|Template|null templates($name = '') Access the $templates API variable as a function. #pw-group-api-helpers
+ * @method User|mixed user($key = '', $value = null) Access the $user API variable as a function. #pw-group-api-helpers
+ * @method Users|PageArray|User|mixed users($selector = '') Access the $users API variable as a function. #pw-group-api-helpers
+ * 
+ * Other standard hookable methods
  * 
  * @method changed(string $what, $old = null, $new = null) See Wire::___changed()
  * @method log($str = '', array $options = array()) See Wire::___log()
  * @method callUnknown($method, $arguments) See Wire::___callUnknown()
  * @method Wire trackException(\Exception $e, $severe = true, $text = null)
  * 
- * The following map API variables to function names and apply only if another function in the class does not 
- * already have the same name, which would override. All defined API variables can be accessed as functions 
- * that return the API variable, whether documented below or not. 
- * 
- * @method Pages|PageArray|Page|NullPage pages($selector = '') Access the $pages API variable as a function. #pw-group-api-helpers
- * @method Page|Mixed page($key = '', $value = null) Access the $page API variable as a function. #pw-group-api-helpers
- * @method Config|mixed config($key = '', $value = null) Access the $config API variable as a function. #pw-group-api-helpers
- * @method Modules|Module|ConfigurableModule|null modules($name = '') Access the $modules API variable as a function. #pw-group-api-helpers
- * @method User|mixed user($key = '', $value = null) Access the $user API variable as a function. #pw-group-api-helpers
- * @method Users|PageArray|User|mixed users($selector = '') Access the $users API variable as a function. #pw-group-api-helpers
- * @method Session|mixed session($key = '', $value = null) Access the $session API variable as a function.  #pw-group-api-helpers
- * @method Field|Fields|null fields($name = '') Access the $fields API variable as a function.  #pw-group-api-helpers
- * @method Templates|Template|null templates($name = '') Access the $templates API variable as a function. #pw-group-api-helpers
- * @method WireDatabasePDO database() Access the $database API variable as a function.  #pw-group-api-helpers
- * @method Permissions|Permission|PageArray|null|NullPage permissions($selector = '') Access the $permissions API variable as a function.  #pw-group-api-helpers
- * @method Roles|Role|PageArray|null|NullPage roles($selector = '') Access the $roles API variable as a function.  #pw-group-api-helpers
- * @method Sanitizer|string|int|array|null|mixed sanitizer($name = '', $value = '') Access the $sanitizer API variable as a function.  #pw-group-api-helpers
- * @method WireDateTime|string|int datetime($format = '', $value = '') Access the $datetime API variable as a function.  #pw-group-api-helpers
- * @method WireFileTools files() Access the $files API variable as a function.  #pw-group-api-helpers
- * @method WireCache|string|array|PageArray|null cache($name = '', $expire = null, $func = null) Access the $cache API variable as a function.  #pw-group-api-helpers
- * @method Languages|Language|NullPage|null languages($name = '') Access the $languages API variable as a function.  #pw-group-api-helpers
- * @method WireInput|WireInputData|WireInputDataCookie|array|string|int|null input($type = '', $key = '', $sanitizer = '') Access the $input API variable as a function.  #pw-group-api-helpers
- * @method WireInputData|string|int|array|null inputGet($key = '', $sanitizer = '') Access the $input->get() API variable as a function.  #pw-group-api-helpers
- * @method WireInputData|string|int|array|null inputPost($key = '', $sanitizer = '') Access the $input->post() API variable as a function.  #pw-group-api-helpers
- * @method WireInputDataCookie|string|int|array|null inputCookie($key = '', $sanitizer = '') Access the $input->cookie() API variable as a function.  #pw-group-api-helpers
  * 
  */
 
@@ -124,7 +134,11 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	private $_instanceNum = 0;
-
+	
+	/**
+	 * Construct
+	 * 
+	 */
 	public function __construct() {}
 
 	/**
@@ -173,7 +187,8 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public static function setFuel($name, $value, $lock = false) {
 		$wire = ProcessWire::getCurrentInstance();
-		if($wire->wire('log')) $wire->wire('log')->deprecatedCall();
+		$log = $wire->wire()->log;
+		if($log) $log->deprecatedCall();
 		$wire->fuel()->set($name, $value, $lock);
 	}
 
@@ -191,7 +206,8 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public static function getFuel($name = '') {
 		$wire = ProcessWire::getCurrentInstance();
-		if($wire->wire('log')) $wire->wire('log')->deprecatedCall();
+		$log = $wire->wire()->log;
+		if($log) $log->deprecatedCall();
 		if(empty($name)) return $wire->fuel();	
 		return $wire->fuel()->$name;
 	}
@@ -208,7 +224,8 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public static function getAllFuel() {
 		$wire = ProcessWire::getCurrentInstance();
-		if($wire->wire('log')) $wire->wire('log')->deprecatedCall();
+		$log = $wire->wire()->log;
+		if($log) $log->deprecatedCall();
 		return $wire->fuel();	
 	}
 
@@ -226,7 +243,8 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public function fuel($name = '') {
 		$wire = $this->wire();
-		if($wire->wire('log')) $wire->wire('log')->deprecatedCall();
+		$log = $wire->wire()->log;
+		if($log) $log->deprecatedCall();
 		return $wire->fuel($name);
 	}
 	
@@ -248,7 +266,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function useFuel($useFuel = null) {
-		if(!is_null($useFuel)) $this->useFuel = $useFuel ? true : false;
+		if($useFuel !== null) $this->useFuel = $useFuel ? true : false;
 		return $this->useFuel;
 	}
 
@@ -339,6 +357,22 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	protected $localHooks = array();
 
 	/**
+	 * @var WireHooks|null
+	 * 
+	 */
+	private $_wireHooks = null;
+
+	/**
+	 * @return WireHooks|null
+	 * @since 3.0.171
+	 * 
+	 */
+	protected function _wireHooks() {
+		if($this->_wireHooks === null) $this->_wireHooks = $this->wire()->hooks;
+		return $this->_wireHooks;
+	}
+
+	/**
 	 * Return all local hooks for this instance
 	 * 
 	 * #pw-internal
@@ -408,8 +442,9 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 		if(method_exists($this, $method)) {
 			return $this->_callMethod($method, $arguments);
 		}
-		$hooks = $this->wire('hooks');
-		if($hooks->isMethodHooked($this, $method)) {
+		/** @var WireHooks $hooks */
+		$hooks = $this->_wireHooks();
+		if($hooks && $hooks->isMethodHooked($this, $method)) {
 			$result = $hooks->runHooks($this, $method, $arguments);
 			return $result['return'];
 		} else {
@@ -445,7 +480,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 				if($val !== null) return $val;
 			}
 		}
-		$hooks = $this->wire('hooks'); /** @var WireHooks $hooks */
+		$hooks = $this->_wireHooks();
 		if($hooks) {
 			$result = $hooks->runHooks($this, $method, $arguments);
 			if(!$result['methodExists'] && !$result['numHooksRun']) {
@@ -524,7 +559,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	protected function ___callUnknown($method, $arguments) {
 		if($arguments) {} // intentional to avoid unused argument notice
-		$config = $this->wire('config');
+		$config = $this->wire()->config;
 		if($config && $config->disableUnknownMethodException) return null;
 		throw new WireException("Method " . $this->className() . "::$method does not exist or is not callable in this context"); 
 	}
@@ -548,7 +583,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function runHooks($method, $arguments, $type = 'method') {
-		return $this->wire('hooks')->runHooks($this, $method, $arguments, $type);
+		return $this->_wireHooks()->runHooks($this, $method, $arguments, $type);
 	}
 
 	/**
@@ -565,7 +600,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function getHooks($method = '', $type = 0) {
-		return $this->wire('hooks')->getHooks($this, $method, $type); 
+		return $this->_wireHooks()->getHooks($this, $method, $type); 
 	}
 	
 	/**
@@ -593,8 +628,9 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	static public function isHooked($method, Wire $instance = null) {
+		/** @var ProcessWire $wire */
 		$wire = $instance ? $instance->wire() : ProcessWire::getCurrentInstance();
-		if($instance) return $instance->wire('hooks')->hasHook($instance, $method);
+		if($instance) return $instance->wire()->hooks->hasHook($instance, $method);
 		return $wire->hooks->isHooked($method);
 	}
 
@@ -614,17 +650,15 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 * #pw-group-hooks
 	 *
-	 * @param string $method Method() or property name:
+	 * @param string $name Method() name or property name:
 	 *   - If checking for a hooked method, it should be in the form `method()`.
 	 *   - If checking for a hooked property, it should be in the form `property`.
 	 * @return bool True if this class instance has the hook, false if not. 
 	 * @throws WireException When you try to call it with a Class::something() type method, which is not supported. 
 	 *
 	 */
-	public function hasHook($method) {
-		// Accomplishes the same thing as the static isHooked() method, but this is non-static, more accruate, 
-	    // potentially slower than isHooked(). Less for optimization use, more for accuracy use. 
-		return $this->wire('hooks')->hasHook($this, $method);
+	public function hasHook($name) {
+		return $this->_wireHooks()->hasHook($this, $name);
 	}
 
 	/**
@@ -668,7 +702,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function addHook($method, $toObject, $toMethod = null, $options = array()) {
-		return $this->wire('hooks')->addHook($this, $method, $toObject, $toMethod, $options);
+		return $this->_wireHooks()->addHook($this, $method, $toObject, $toMethod, $options);
 	}
 
 	/**
@@ -720,7 +754,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 		// This is the same as calling addHook with the 'before' option set the $options array.
 		$options['before'] = true; 
 		if(!isset($options['after'])) $options['after'] = false; 
-		return $this->wire('hooks')->addHook($this, $method, $toObject, $toMethod, $options); 
+		return $this->_wireHooks()->addHook($this, $method, $toObject, $toMethod, $options); 
 	}
 
 	/**
@@ -769,7 +803,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	public function addHookAfter($method, $toObject, $toMethod = null, $options = array()) {
 		$options['after'] = true; 
 		if(!isset($options['before'])) $options['before'] = false; 
-		return $this->wire('hooks')->addHook($this, $method, $toObject, $toMethod, $options); 
+		return $this->_wireHooks()->addHook($this, $method, $toObject, $toMethod, $options); 
 	}
 
 	/**
@@ -816,7 +850,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 		// This is the same as calling addHook with the 'type' option set to 'property' in the $options array. 
 	    // Note that descending classes that override __get must call getHook($property) and/or runHook($property).
 		$options['type'] = 'property'; 
-		return $this->wire('hooks')->addHook($this, $property, $toObject, $toMethod, $options); 
+		return $this->_wireHooks()->addHook($this, $property, $toObject, $toMethod, $options); 
 	}
 	
 	/**
@@ -876,7 +910,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function addHookMethod($method, $toObject, $toMethod = null, $options = array()) {
-		return $this->wire('hooks')->addHook($this, $method, $toObject, $toMethod, $options);
+		return $this->_wireHooks()->addHook($this, $method, $toObject, $toMethod, $options);
 	}
 
 	/**
@@ -909,7 +943,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function removeHook($hookId) {
-		return $this->wire('hooks')->removeHook($this, $hookId);
+		return $this->_wireHooks()->removeHook($this, $hookId);
 	}
 
 	
@@ -940,7 +974,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * @var int Bitmask
 	 *
 	 */
-	private $trackChanges = 0;
+	protected $trackChanges = 0;
 
 	/**
 	 * Array containing the names of properties (as array keys) that were changed while change tracking was ON.
@@ -1027,7 +1061,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 		
 			if(is_null($old) || is_null($new) || $lastValue !== $new) {
 				/** @var WireHooks $hooks */
-				$hooks = $this->wire('hooks');
+				$hooks = $this->_wireHooks();
 				if(($hooks && $hooks->isHooked('changed()')) || !$hooks) {
 					$this->changed($what, $old, $new); // triggers ___changed hook
 				} else {
@@ -1197,7 +1231,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * Record a Notice, internal use (contains the code for message, warning and error methods)
 	 * 
 	 * @param string|array|Wire $text Title of notice
-	 * @param int $flags Flags bitmask
+	 * @param int|string $flags Flags bitmask or space separated string of flag names
 	 * @param string $name Name of container
 	 * @param string $class Name of Notice class
 	 * @return $this
@@ -1208,9 +1242,10 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 		$class = wireClassName($class, true);
 		$notice = $this->wire(new $class($text, $flags));
 		$notice->class = $this->className();
-		if(is_null($this->_notices[$name])) $this->_notices[$name] = $this->wire(new Notices());
-		$this->wire('notices')->add($notice);
-		if(!($notice->flags & Notice::logOnly)) $this->_notices[$name]->add($notice);
+		if($this->_notices[$name] === null) $this->_notices[$name] = $this->wire(new Notices());
+		$notices = $this->wire()->notices;
+		if($notices) $notices->add($notice); // system wide
+		if(!($notice->flags & Notice::logOnly)) $this->_notices[$name]->add($notice); // local only
 		return $this; 
 	}
 
@@ -1230,12 +1265,19 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * #pw-group-notices
 	 *
 	 * @param string|array|Wire $text Text to include in the notice
-	 * @param int|bool $flags Optional flags to alter default behavior: 
+	 * @param int|bool|string $flags Optional flags to alter default behavior:
+	 *  - `Notice::admin` (constant): Show notice only if user is in the admin.
+	 *  - `Notice::allowMarkdown` (constant): Allow basic markdown and bracket markup (see $sanitizer->entitiesMarkdown()).
+	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
 	 *  - `Notice::debug` (constant): Indicates notice should only be shown when debug mode is active.
 	 *  - `Notice::log` (constant): Indicates notice should also be logged.
 	 *  - `Notice::logOnly` (constant): Indicates notice should only be logged.
-	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
+	 *  - `Notice::login` (constant): Show notice only if it will be seen by a logged-in user.
+	 *  - `Notice::noGroup` (constant): Indicates notice should not group with others of the same type (where supported).
+	 *  - `Notice::prepend` (constant): Indicates notice should prepend rather than append.
+	 *  - `Notice::superuser` (constant): Show notice only if current user is a superuser.
 	 *  - `true` (boolean): Shortcut for the `Notice::log` constant.
+	 *  - In 3.0.149+ you may also specify a space-separated string of flag names, i.e. "admin log noGroup". 
 	 * @return $this
 	 * @see Wire::messages(), Wire::warning(), Wire::error()
 	 *
@@ -1260,12 +1302,19 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * #pw-group-notices
 	 *
 	 * @param string|array|Wire $text Text to include in the notice
-	 * @param int|bool $flags Optional flags to alter default behavior:
+	 * @param int|bool|string $flags Optional flags to alter default behavior:
+	 *  - `Notice::admin` (constant): Show notice only if user is in the admin.
+	 *  - `Notice::allowMarkdown` (constant): Allow basic markdown and bracket markup (see $sanitizer->entitiesMarkdown()).
+	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
 	 *  - `Notice::debug` (constant): Indicates notice should only be shown when debug mode is active.
 	 *  - `Notice::log` (constant): Indicates notice should also be logged.
 	 *  - `Notice::logOnly` (constant): Indicates notice should only be logged.
-	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
+	 *  - `Notice::login` (constant): Show notice only if it will be seen by a logged-in user.
+	 *  - `Notice::noGroup` (constant): Indicates notice should not group with others of the same type (where supported).
+	 *  - `Notice::prepend` (constant): Indicates notice should prepend rather than append.
+	 *  - `Notice::superuser` (constant): Show notice only if current user is a superuser.
 	 *  - `true` (boolean): Shortcut for the `Notice::log` constant.
+	 *  - In 3.0.149+ you may also specify a space-separated string of flag names, i.e. "admin log noGroup". 
 	 * @return $this
 	 * @see Wire::warnings(), Wire::message(), Wire::error()
 	 *
@@ -1292,12 +1341,19 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * #pw-group-notices
 	 *
 	 * @param string|array|Wire $text Text to include in the notice
-	 * @param int|bool $flags Optional flags to alter default behavior:
+	 * @param int|bool|string $flags Optional flags to alter default behavior:
+	 *  - `Notice::admin` (constant): Show notice only if user is in the admin.
+	 *  - `Notice::allowMarkdown` (constant): Allow basic markdown and bracket markup (see $sanitizer->entitiesMarkdown()).
+	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
 	 *  - `Notice::debug` (constant): Indicates notice should only be shown when debug mode is active.
 	 *  - `Notice::log` (constant): Indicates notice should also be logged.
 	 *  - `Notice::logOnly` (constant): Indicates notice should only be logged.
-	 *  - `Notice::allowMarkup` (constant): Indicates notice should allow the use of HTML markup tags.
+	 *  - `Notice::login` (constant): Show notice only if it will be seen by a logged-in user.
+	 *  - `Notice::noGroup` (constant): Indicates notice should not group with others of the same type (where supported).
+	 *  - `Notice::prepend` (constant): Indicates notice should prepend rather than append.
+	 *  - `Notice::superuser` (constant): Show notice only if current user is a superuser.
 	 *  - `true` (boolean): Shortcut for the `Notice::log` constant.
+	 *  - In 3.0.149+ you may also specify a space-separated string of flag names, i.e. "admin log noGroup". 
 	 * @return $this
 	 * @see Wire::errors(), Wire::message(), Wire::warning()
 	 *
@@ -1325,19 +1381,19 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * 
 	 */
 	public function ___trackException(\Exception $e, $severe = true, $text = null) {
-		$config = $this->wire('config');
-		$log = $this->wire('log');
+		$config = $this->wire()->config;
+		$log = $this->wire()->log;
 		$msg = $e->getMessage();
 		if($text !== null) {
 			if($text === true) $text = $msg;
 			$severe ? $this->error($text) : $this->warning($text);
-			if(strpos($text, $msg) === false) $msg = "$text - $msg";
+			if(strlen($msg) && strpos($text, $msg) === false) $msg = "$text - $msg";
 		}
 		if(in_array('exceptions', $config->logs) && $log) {
 			$msg .= " (in " . str_replace($config->paths->root, '/', $e->getFile()) . " line " . $e->getLine() . ")";
 			$log->save('exceptions', $msg);
 		}
-		if($severe && $this->wire('config')->allowExceptions) {
+		if($severe && $config->allowExceptions) {
 			throw $e; // re-throw, if requested
 		}
 		return $this;
@@ -1451,26 +1507,38 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public function messages($options = array()) {
 		if(!is_array($options)) $options = explode(' ', strtolower($options)); 
-		if(in_array('errors', $options)) $type = 'errors'; 
-			else if(in_array('warnings', $options)) $type = 'warnings';
-			else $type = 'messages';
+		if(in_array('errors', $options)) {
+			$type = 'errors';
+		} else if(in_array('warnings', $options)) {
+			$type = 'warnings';
+		} else {
+			$type = 'messages';
+		}
 		$clear = in_array('clear', $options); 
 		if(in_array('all', $options)) {
 			// get all of either messages, warnings or errors (either in or out of this object instance)
-			$value = $this->wire(new Notices());
-			foreach($this->wire('notices') as $notice) {
+			$notices = $this->wire()->notices; 
+			$value = $this->wire(new Notices()); /** @var Notices $value */
+			foreach($notices as $notice) {
 				if($notice->getName() != $type) continue;
 				$value->add($notice);
-				if($clear) $this->wire('notices')->remove($notice); // clear global
+				if($clear) $notices->remove($notice); // clear global
 			}
 			if($clear) $this->_notices[$type] = null; // clear local
 		} else {
 			// get messages, warnings or errors specific to this object instance
-			$value = is_null($this->_notices[$type]) ? $this->wire(new Notices()) : $this->_notices[$type];
-			if(in_array('first', $options)) $value = $clear ? $value->shift() : $value->first();
-				else if(in_array('last', $options)) $value = $clear ? $value->pop() : $value->last(); 
-				else if($clear) $this->_notices[$type] = null;
-			if($clear && $value) $this->wire('notices')->removeItems($value); // clear from global notices
+			/** @var Notices $value */
+			$value = $this->_notices[$type] === null ? $this->wire(new Notices()) : $this->_notices[$type];
+			if(in_array('first', $options)) {
+				$value = $clear ? $value->shift() : $value->first();
+			} else if(in_array('last', $options)) {
+				$value = $clear ? $value->pop() : $value->last();
+			} else if($clear) {
+				$this->_notices[$type] = null;
+			}
+			if($clear && $value) {
+				$this->wire()->notices->removeItems($value); // clear from global notices
+			}
 		}
 		if(in_array('array', $options) || in_array('string', $options)) {
 			if($value instanceof Notice) {
@@ -1509,7 +1577,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function ___log($str = '', array $options = array()) {
-		$log = $this->wire('log');
+		$log = $this->wire()->log;
 		if($log && strlen($str)) {
 			if(isset($options['name'])) {
 				$name = $options['name'];
@@ -1534,7 +1602,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * 
 	 * #pw-group-translation
 	 *
-	 * @param string $text Text string to translate
+	 * @param string|array $text Text string to translate (or array in 3.0.151 also supported)
 	 * @return string
 	 *
 	 */
@@ -1549,7 +1617,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 * 
 	 * #pw-group-translation
 	 * 
-	 * @param string $text Text for translation. 
+	 * @param string|array $text Text for translation. 
 	 * @param string $context Name of context
 	 * @return string Translated text or original text if translation not available.
 	 *
@@ -1583,7 +1651,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	/**
 	 * ProcessWire instance
 	 *
-	 * @var ProcessWire|null
+	 * @var ProcessWire|bool|null
 	 *
 	 */
 	protected $_wire = null;
@@ -1591,16 +1659,19 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	/**
 	 * Set the current ProcessWire instance for this object (PW 3.0)
 	 * 
-	 * Specify no arguments to get, or specify a ProcessWire instance to set.
-	 * 
 	 * #pw-internal
 	 *
 	 * @param ProcessWire $wire
 	 *
 	 */
 	public function setWire(ProcessWire $wire) {
+		$wired = $this->_wire;
+		if($wired === $wire) return;
 		$this->_wire = $wire;
+		if($this->_wireHooks) $this->_wireHooks = $wire->wire()->hooks;
+		if($wired) return;
 		$this->getInstanceNum();
+		$this->wired();
 	}
 
 	/**
@@ -1614,7 +1685,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 *
 	 */
 	public function getWire() {
-		return $this->_wire;
+		return $this->_wire ? $this->_wire : null;
 	}
 
 	/**
@@ -1692,18 +1763,20 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public function wire($name = '', $value = null, $lock = false) {
 
-		if($this->_wire === null) {
+		if($this->_wire) {
+			// this instance is wired
+			$wire = $this->_wire;
+			// quick exit when _wire already set and not getting/setting API var
+			if($name === '') return $wire;
+		} else {
 			// this object has not yet been wired! use last known current instance as fallback
 			// note this condition is unsafe in multi-instance mode
 			$wire = ProcessWire::getCurrentInstance();
-			if(!$wire) return null;
-			
-			// For live hunting objects that are using the fallback, uncomment the following:
-			// echo "<hr /><p>Non-wired object: '$name' in " . get_class($this) . ($value ? " (value=$value)" : "") . "</p>";
-			// echo "<pre>" . print_r(debug_backtrace(), true) . "</pre>";
-		} else {
-			// this instance is wired
-			$wire = $this->_wire;
+			if(!$wire) return is_object($name) ? $name : null; // there are no ProcessWire instances
+			if($name && $this->_wire === null) {
+				$this->_wire = false; // false prevents this from being called another time for this object
+				$wire->_objectNotWired($this, $name, $value);
+			}
 		}
 
 		if(is_object($name)) {
@@ -1716,7 +1789,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 				}
 				$value = $name; // return the provided instance
 			} else {
-				throw new WireException("Wire::wire(\$o) expected WireFuelable for \$o and was given " . get_class($name));
+				throw new WireException('Wire::wire($o) expected WireFuelable for $o and was given ' . get_class($name));
 			}
 
 		} else if($value !== null) {
@@ -1741,6 +1814,38 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	}
 
 	/**
+	 * Initialization called when object injected with ProcessWire instance (aka “wired”)
+	 *
+	 * - Can be used for any constructor-type initialization that depends on API vars.
+	 * - Called automatically when object is “wired”, do not call it on your own.
+	 * - Expects to be called only once per object instance.
+	 * - Typically called after `__construct()` but before any other method calls.
+	 * - Please note: If object is never “wired” then this method will not be called!
+	 *
+	 * ~~~~~
+	 * class Test extends Wire {
+	 *   function wired() { 
+	 *     echo "Wired to ProcessWire instance: "; 
+	 *     echo $this->wire()->getProcessWireInstanceID();
+	 *   }
+	 * }
+	 *
+	 * // objects in ProcessWire are “wired” like this:
+	 * $o = new Test();
+	 * $this->wire($o); // outputs "ProcessWire instance: n"
+	 *
+	 * // or on one line, like this…
+	 * $this->wire(new Test()); // outputs "ProcessWire instance: n"
+	 * ~~~~~
+	 *
+	 * #pw-internal
+	 *
+	 * @since 3.0.158
+	 *
+	 */
+	public function wired() { }
+
+	/**
 	 * Get an object property by direct reference or NULL if it doesn't exist
 	 *
 	 * If not overridden, this is primarily used as a shortcut for the fuel() method.
@@ -1753,18 +1858,18 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public function __get($name) {
 
-		if($name == 'wire') return $this->wire();
-		if($name == 'fuel') return $this->wire('fuel');
-		if($name == 'className') return $this->className();
+		if($name === 'wire') return $this->wire();
+		if($name === 'fuel') return $this->wire('fuel');
+		if($name === 'className') return $this->className();
 
 		if($this->useFuel()) {
 			$value = $this->wire($name);
 			if($value !== null) return $value; 
 		}
 
-		$hooks = $this->wire('hooks');
+		$hooks = $this->_wireHooks(); /** @var WireHooks $hooks */
 		if($hooks && $hooks->isHooked($name)) { // potential property hook
-			$result = $this->runHooks($name, array(), 'property');
+			$result = $hooks->runHooks($this, $name, array(), 'property');
 			return $result['return'];
 		}
 
@@ -1781,6 +1886,7 @@ abstract class Wire implements WireTranslatable, WireFuelable, WireTrackable {
 	 */
 	public function __debugInfo() {
 		/** @var WireDebugInfo $debugInfo */
+		require_once(__DIR__ . '/WireDebugInfo.php');
 		$debugInfo = $this->wire(new WireDebugInfo());
 		return $debugInfo->getDebugInfo($this, true);
 	}

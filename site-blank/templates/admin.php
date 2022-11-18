@@ -10,6 +10,9 @@
  * Feel free to hook admin-specific functionality from this file, 
  * but remember to leave the require() statement below at the end.
  * 
+ * Note: this template file does not use the _init.php or _main.php
+ * 
  */
 
-require($config->paths->adminTemplates . 'controller.php'); 
+/** @var Config $config */
+require($config->paths->core . "admin.php"); 

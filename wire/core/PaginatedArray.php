@@ -156,7 +156,7 @@ class PaginatedArray extends WireArray implements WirePaginatable {
 	 * 
 	 * #pw-group-other
 	 * 
-	 * @return int
+	 * @return bool
 	 * @since 3.0.120
 	 * 
 	 */
@@ -291,7 +291,7 @@ class PaginatedArray extends WireArray implements WirePaginatable {
 			
 		} else {
 
-			if($count > $limit) $count = $limit;
+			if($limit && $count > $limit) $count = $limit;
 			$end = $start + $count;
 			if($end > $total) $total = $end;
 			$start++; // make 1 based rather than 0 based...

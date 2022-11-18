@@ -161,13 +161,22 @@ class ProcessPageSearchLive extends Wire {
 		if($process) {
 			$process->wire($this);
 			if($process instanceof ProcessPageSearch) $this->process = $process;
-			$a = explode(' ', $process->searchFields2);
+			$searchFields = $this->wire()->config->ajax ? $process->searchFields2 : $process->searchFields;
+			$a = explode(' ', $searchFields);
 			if(count($a)) $this->defaultPageSearchFields = $a;
 		}
 		
 		if(!empty($liveSearch)) {
 			$this->liveSearchDefaults = array_merge($this->liveSearchDefaults, $liveSearch);
 		}
+		
+		$findOperators = Selectors::getOperators(array(
+			'compareType' => Selector::compareTypeFind, 
+			'getIndexType' => 'none',
+			'getValueType' => 'operator',
+		));
+		
+		$this->allowOperators = array_unique(array_merge($this->allowOperators, $findOperators)); 
 		
 		$this->labels = array(
 			'missing-query' => $this->_('No search specified'),
@@ -234,6 +243,8 @@ class ProcessPageSearchLive extends Wire {
 		$user = $this->wire('user');
 		/** @var Languages $languages */
 		$languages = $this->wire('languages');
+		/** @var AdminTheme|AdminThemeFramework $adminTheme */
+		$adminTheme = $this->wire()->adminTheme; 
 
 		$type = isset($presets['type']) ? $presets['type'] : '';
 		$language = isset($presets['language']) ? $presets['language'] : '';
@@ -280,10 +291,13 @@ class ProcessPageSearchLive extends Wire {
 			} else if(strpos($q, '=') !== false) {
 				// regular equals or other w/equals
 				$replaceOperator = '=';
-				if(preg_match('/([%~*^$<>!]{1,2}=)/', $q, $matches)) {
+				$opChars = Selectors::getOperatorChars();
+				if(preg_match('/([' . preg_quote(implode('', $opChars)) . ']{1,3}=)/', $q, $matches)) {
 					if(in_array($matches[1], $this->allowOperators)) {
 						$operator = $matches[1];
 						$replaceOperator = $operator;
+					} else {
+						$q = str_replace($opChars, ' ', $q);
 					}
 				} else {
 					// regular equals, use default operator	
@@ -362,6 +376,9 @@ class ProcessPageSearchLive extends Wire {
 			$selectors[] = implode('|', $this->defaultPageSearchFields) . $operator . $value;
 		}
 
+		$help = strtolower($q) === 'help';
+		if(!$help && $adminTheme && $q === $adminTheme->getLabel('search-help')) $help = true;
+		
 		$liveSearch = array_merge($this->liveSearchDefaults, $presets, array(
 			'type' => $type,
 			'property' => $property,
@@ -373,7 +390,7 @@ class ProcessPageSearchLive extends Wire {
 			'language' => $language, 
 			'start' => $start, 
 			'limit' => $limit,
-			'help' => strtolower($q) === 'help',
+			'help' => $help,
 		));
 		
 		if($this->isViewAll) {
@@ -1115,23 +1132,25 @@ class ProcessPageSearchLive extends Wire {
 		$group = '';
 		$groups = array();
 		$totals = array();
-		$icon = wireIconMarkup('angle-right');
+		$counts = array();
+		$btn = $this->modules->get('InputfieldButton'); /** @var InputfieldButton $btn */
+		$btn->aclass = "$prefix-view-all";
 	
 		foreach($items as $item) {
 			if($item['group'] != $group) {
 				$group = $item['group'];
 				$groups[$group] = ''; 
 			}
+			$counts[$group] = isset($counts[$group]) ? $counts[$group] + 1 : 1;
 			if(empty($totals[$group]) && isset($item['n'])) {
 				list(, $total) = explode('/', $item['n']);
 				$totals[$group] = (int) $total;
 			}
 			if($item['name'] === 'view-all') {
 				if($pagination) continue;
-				$groupLabel = $this->wire('sanitizer')->entities($group);
-				$groups[$group] .= 
-					"<p><a class='$prefix-view-all' href='$item[url]'>" . 
-					"$item[title] $icon $groupLabel (" . $totals[$group] . ")</a></p>";
+				$btn->href = $item['url'];
+				$btn->value = "$item[title] > $group (" . $totals[$group] . ")";
+				$groups[$group] .= $btn->render();
 			} else {
 				$groups[$group] .= $this->renderItem($item, $prefix) . '<hr />';
 			}
@@ -1139,7 +1158,7 @@ class ProcessPageSearchLive extends Wire {
 		
 		$totalGroups = array();
 		foreach($groups as $group => $content) {
-			$total = $totals[$group];
+			$total = empty($totals[$group]) ? $counts[$group] : (int) $totals[$group];
 			$totalGroups["$group ($total)"] = $content;
 			unset($groups[$group]); 
 		}

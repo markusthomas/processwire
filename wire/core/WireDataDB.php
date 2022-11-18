@@ -253,6 +253,7 @@ class WireDataDB extends WireData implements \Countable {
 	 * @return int
 	 * 
 	 */
+	#[\ReturnTypeWillChange] 
 	public function count() {
 		$table = $this->table();
 		$sql = "SELECT COUNT(*) FROM `$table` WHERE source_id=:source_id";
@@ -298,7 +299,11 @@ class WireDataDB extends WireData implements \Countable {
 	 * 
 	 */
 	public function table($tableName = '') {
-		if($tableName !== '') $this->table = strtolower($this->wire('database')->escapeTable($tableName));
+		if($tableName === '') return $this->table;
+		if(!ctype_alnum(str_replace('_', '', $tableName))) {
+			$tableName = preg_replace('/[^_a-zA-Z0-9]/', '_', $tableName);
+		}
+		$this->table = strtolower($tableName);
 		return $this->table;
 	}
 
@@ -350,7 +355,8 @@ class WireDataDB extends WireData implements \Countable {
 		$this->wire('database')->exec("DROP TABLE `$table`"); 
 		return true;
 	}
-	
+
+	#[\ReturnTypeWillChange] 
 	public function getIterator() {
 		return new \ArrayObject($this->getArray());
 	}

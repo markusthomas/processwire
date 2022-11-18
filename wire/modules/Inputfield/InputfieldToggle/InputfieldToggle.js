@@ -32,27 +32,31 @@ function InputfieldToggleInit() {
 
 		// allow for labels as prev sibling of input or label as parent element of input
 		var $label = getLabelFromInput($input);
-		var $prevInput = $input.closest('.Inputfield').find('input.' + inputCheckedClass);
+		var $prevInput = $input.closest('.InputfieldToggle').find('input.' + inputCheckedClass);
 		var $prevLabel = $prevInput.length ? getLabelFromInput($prevInput) : null; 
 
 		// check of another item was clicked when an existing selection was in place
 		if($prevInput.length && $prevInput.attr('id') != $input.attr('id')) {
 			// remove our custom class from existing selection
-			$prevInput.removeClass(inputCheckedClass).removeAttr('checked');
+			// $prevInput.removeClass(inputCheckedClass).removeAttr('checked'); // JQM
+			$prevInput.removeClass(inputCheckedClass).prop('checked', false);
 			if($prevLabel) $prevLabel.removeClass(labelCheckedClass);
 		}
 
 		// check if clicked input was already checked
 		if($input.hasClass(inputCheckedClass) && $input.closest('.InputfieldToggleUseDeselect').length) {
 			// if clicked input was already checked, now make it un-checked
-			$input.removeAttr('checked').removeClass(inputCheckedClass);
+			// $input.removeAttr('checked').removeClass(inputCheckedClass); // JQM
+			$input.prop('checked', false).removeClass(inputCheckedClass);
 			$label.removeClass(labelCheckedClass);
 			// if this de-select was the first selection in the request, it's necessary to remove
 			// the checked attribute again a short while later for some reason
-			setTimeout(function() { $input.removeAttr('checked').trigger('change'); }, 100);
+			// setTimeout(function() { $input.removeAttr('checked').trigger('change'); }, 100); // JQM
+			setTimeout(function() { $input.prop('checked', false).trigger('change'); }, 100);
 		} else {
 			// input was just checked (and wasn't before), so add our checked class to the input
-			$input.attr('checked', 'checked').prop('checked', 'checked');
+			// $input.attr('checked', 'checked').prop('checked', true); // JQM
+			$input.prop('checked', true);
 			$input.addClass(inputCheckedClass);
 			$label.addClass(labelCheckedClass);
 			$input.trigger('change');

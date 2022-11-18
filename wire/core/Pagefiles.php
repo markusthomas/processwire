@@ -373,6 +373,8 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 		
 		if($this->page && $this->field && !$this->page->isChanged($this->field->name)) return $this;
 		
+		$this->page->filesManager()->uncache();
+		
 		foreach($this->unTempQueue as $item) {
 			$item->isTemp(false);
 		}
@@ -572,18 +574,20 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 	 */ 
 	public function cleanBasename($basename, $originalize = false, $allowDots = true, $translate = false) {
 
+		$sanitizer = $this->wire()->sanitizer;
 		$basename = function_exists('mb_strtolower') ? mb_strtolower($basename) : strtolower($basename);
 		$dot = strrpos($basename, '.'); 
-		$ext = $dot ? substr($basename, $dot) : ''; 
+		$ext = $dot ? substr($basename, $dot) : '';
 		$basename = basename($basename, $ext);
+		while(strpos($basename, '..') !== false) $basename = str_replace('..', '', $basename);
 		$test = str_replace(array('-', '_', '.'), '', $basename);
 		
 		if(!ctype_alnum($test)) {
 			if($translate) {
-				$basename = $this->wire('sanitizer')->filename($basename, Sanitizer::translate); 
+				$basename = $sanitizer->filename($basename, Sanitizer::translate); 
 			} else {
 				$basename = preg_replace('/[^-_.a-z0-9]/', '_', $basename);
-				$basename = $this->wire('sanitizer')->filename($basename);
+				$basename = $sanitizer->filename($basename);
 			}
 		}
 		
@@ -771,7 +775,8 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 			if(!$isTemp) return false; // if not a temp file, we can exit now
 			if(!$checkDeletable) return $isTemp; // if not checking deletable, we can exit now
 		}
-		
+
+		$user = $this->wire('user');
 		$now = time();
 		$session = $this->wire('session');
 		$pageID = $this->page ? $this->page->id : 0;
@@ -803,6 +808,8 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 			// set temporary status to true
 			$pagefile->created = Pagefile::createdTemp;
 			$pagefile->modified = $now; 
+			$pagefile->createdUser = $user;
+			$pagefile->modifiedUser = $user;
 			//                          mtime                  atime
 			@touch($pagefile->filename, Pagefile::createdTemp, $now);
 			$isTemp = true;
@@ -815,6 +822,8 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 			// set temporary status to false
 			$pagefile->created = $now;
 			$pagefile->modified = $now; 
+			$pagefile->createdUser = $user;
+			$pagefile->modifiedUser = $user;
 			@touch($pagefile->filename, $now);
 			$isTemp = false;
 			
@@ -941,7 +950,7 @@ class Pagefiles extends WireArray implements PageFieldValueInterface {
 				$this->fieldsTemplate = false;
 				/** @var FieldtypeFile $fieldtype */
 				$fieldtype = $field->type;
-				$template = $fieldtype ? $fieldtype->getFieldsTemplate($field) : null;
+				$template = $fieldtype && $fieldtype instanceof FieldtypeFile ? $fieldtype->getFieldsTemplate($field) : null;
 				if($template) $this->fieldsTemplate = $template;
 			}
 		}
